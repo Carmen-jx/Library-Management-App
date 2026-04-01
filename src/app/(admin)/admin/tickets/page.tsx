@@ -20,8 +20,7 @@ import { Avatar } from '@/components/ui/avatar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/components/ui/toast';
 import { useAuth } from '@/hooks/useAuth';
-import { getAllTickets, updateTicket } from '@/services/tickets';
-import { createNotification } from '@/services/notifications';
+import { getAllTickets } from '@/services/tickets';
 import { cn, formatDate, timeAgo } from '@/lib/utils';
 import type { Ticket, TicketStatus, TicketPriority } from '@/types';
 
@@ -121,22 +120,23 @@ function TicketRow({ ticket, expanded, onToggle, onUpdate, currentUserId }: Tick
     setSaving(true);
 
     try {
-      const updated = await updateTicket(ticket.id, {
-        status,
-        admin_response: adminResponse || null,
+      const response = await fetch('/api/tickets/update', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ticketId: ticket.id,
+          status,
+          admin_response: adminResponse || null,
+        }),
       });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to update ticket.');
+      }
+
+      const { ticket: updated } = await response.json();
       onUpdate(updated);
-
-      const statusLabel = status.replace('_', ' ');
-      await createNotification(
-        currentUserId,
-        ticket.user_id,
-        'ticket_updated',
-        `Ticket Updated: ${ticket.subject}`,
-        `Your ticket has been updated to "${statusLabel}".`,
-        `/tickets?ticketId=${ticket.id}`
-      );
-
       toast.success('Ticket updated successfully.');
     } catch (err) {
       console.error('Update ticket error:', err);

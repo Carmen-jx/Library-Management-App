@@ -3,9 +3,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
-import { createTicket, getUserTickets } from '@/services/tickets';
+import { getUserTickets } from '@/services/tickets';
 import { logActivity } from '@/services/activity';
-import { notifyAdmins } from '@/services/notifications';
 import { Ticket, TicketStatus, TicketPriority } from '@/types';
 import { cn, formatDate, timeAgo } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -56,7 +55,7 @@ const PRIORITY_OPTIONS = [
 ];
 
 export default function TicketsPage() {
-  const { user, profile } = useAuth();
+  const { user } = useAuth();
   const searchParams = useSearchParams();
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
@@ -103,25 +102,28 @@ export default function TicketsPage() {
 
     try {
       setSubmitting(true);
-      const newTicket = await createTicket(user.id, {
-        subject: subject.trim(),
-        message: message.trim(),
-        priority,
+      const response = await fetch('/api/tickets/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subject: subject.trim(),
+          message: message.trim(),
+          priority,
+        }),
       });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to create ticket.');
+      }
+
+      const { ticket: newTicket } = await response.json();
 
       await logActivity(user.id, 'ticket_created', {
         ticketId: newTicket.id,
         subject: newTicket.subject,
         priority,
       });
-
-      await notifyAdmins(
-        user.id,
-        'ticket_created',
-        `New Ticket: ${newTicket.subject}`,
-        `${profile?.name ?? 'A user'} submitted a support ticket.`,
-        `/admin/tickets?ticketId=${newTicket.id}`
-      );
 
       setTickets((prev) => [newTicket, ...prev]);
       toast.success('Ticket created successfully.');

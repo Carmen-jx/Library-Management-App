@@ -10,7 +10,6 @@ export interface DashboardData {
   monthlyBorrowCount: number;
   favoriteGenre: string | null;
   mostReadAuthor: string | null;
-  recentSearches: { query: string; date: string }[];
   friendsBorrows: FriendBorrow[];
   totalBorrowed: number;
   favoritesCount: number;
@@ -151,37 +150,6 @@ async function getMostReadAuthor(userId: string): Promise<string | null> {
   return topAuthor;
 }
 
-async function getRecentSearches(
-  userId: string
-): Promise<{ query: string; date: string }[]> {
-  const supabase = createClient();
-
-  const { data, error } = await supabase
-    .from('activity_logs')
-    .select('metadata, created_at')
-    .eq('user_id', userId)
-    .eq('action', 'search')
-    .order('created_at', { ascending: false })
-    .limit(5);
-
-  if (error) throw error;
-  if (!data) return [];
-
-  const searches: { query: string; date: string }[] = [];
-  const seen = new Set<string>();
-
-  for (const row of data) {
-    const meta = row.metadata as Record<string, unknown> | null;
-    const q = (meta?.query as string)?.trim();
-    if (q && !seen.has(q.toLowerCase())) {
-      seen.add(q.toLowerCase());
-      searches.push({ query: q, date: row.created_at });
-    }
-  }
-
-  return searches;
-}
-
 async function getFriendsRecentBorrows(userId: string): Promise<FriendBorrow[]> {
   const supabase = createClient();
 
@@ -229,7 +197,6 @@ export async function fetchAllDashboardData(userId: string): Promise<DashboardDa
     monthlyBorrowCount,
     favoriteGenre,
     mostReadAuthor,
-    recentSearches,
     friendsBorrows,
     totalBorrowedResult,
     favoritesResult,
@@ -240,7 +207,6 @@ export async function fetchAllDashboardData(userId: string): Promise<DashboardDa
     getMonthlyBorrowCount(userId),
     getFavoriteGenre(userId),
     getMostReadAuthor(userId),
-    getRecentSearches(userId),
     getFriendsRecentBorrows(userId),
     supabase
       .from('borrows')
@@ -259,7 +225,6 @@ export async function fetchAllDashboardData(userId: string): Promise<DashboardDa
     monthlyBorrowCount,
     favoriteGenre,
     mostReadAuthor,
-    recentSearches,
     friendsBorrows,
     totalBorrowed: totalBorrowedResult.count ?? 0,
     favoritesCount: favoritesResult.count ?? 0,

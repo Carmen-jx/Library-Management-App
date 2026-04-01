@@ -7,11 +7,27 @@ import type { OpenLibraryWork } from '@/types';
 function buildSearchCandidates(
   originalQuery: string,
   optimizedQuery: string,
-  inferredGenre?: string
+  structuredParams: {
+    title?: string;
+    author?: string;
+    genre?: string;
+    keywords?: string[];
+    concepts?: string[];
+  }
 ): string[] {
+  const titleAuthor = [structuredParams.title, structuredParams.author]
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+  const keywordPhrase = (structuredParams.keywords ?? []).slice(0, 4).join(' ').trim();
+  const conceptPhrase = (structuredParams.concepts ?? []).slice(0, 3).join(' ').trim();
   const candidates = [
-    inferredGenre ? `${optimizedQuery} ${inferredGenre}` : optimizedQuery,
+    [optimizedQuery, structuredParams.genre].filter(Boolean).join(' ').trim(),
+    [titleAuthor, structuredParams.genre].filter(Boolean).join(' ').trim(),
+    [keywordPhrase, structuredParams.genre].filter(Boolean).join(' ').trim(),
+    [conceptPhrase, structuredParams.genre].filter(Boolean).join(' ').trim(),
     optimizedQuery,
+    titleAuthor,
     originalQuery,
   ];
 
@@ -82,7 +98,7 @@ export async function POST(request: NextRequest) {
     const searchCandidates = buildSearchCandidates(
       trimmedQuery,
       structuredParams.searchQuery || trimmedQuery,
-      structuredParams.genre
+      structuredParams
     );
 
     let openLibraryResults: OpenLibraryWork[] = [];

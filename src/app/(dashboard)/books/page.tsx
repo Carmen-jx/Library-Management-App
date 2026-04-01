@@ -120,22 +120,6 @@ export default function BooksPage() {
     setPage(0);
   }, [searchQuery, filters]);
 
-  // Log search activity (debounced)
-  useEffect(() => {
-    if (!user || !searchQuery.trim()) return;
-
-    const timeout = setTimeout(() => {
-      const supabase = createClient();
-      supabase.from('activity_logs').insert({
-        user_id: user.id,
-        action: 'search',
-        metadata: { query: searchQuery.trim() },
-      });
-    }, 1000);
-
-    return () => clearTimeout(timeout);
-  }, [searchQuery, user]);
-
   const handleSearch = useCallback((query: string) => {
     setSearchQuery(query);
   }, []);

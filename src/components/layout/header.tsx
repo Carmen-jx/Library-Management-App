@@ -15,8 +15,6 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/toast';
 import { createClient } from '@/lib/supabase/client';
-import { createTicket } from '@/services/tickets';
-import { notifyAdmins } from '@/services/notifications';
 import { NotificationDropdown } from '@/components/layout/notification-dropdown';
 import type { Book } from '@/types';
 
@@ -195,18 +193,21 @@ export function Header() {
 
     setRequestingBook(true);
     try {
-      const ticket = await createTicket(user.id, {
-        subject: `Book Request: ${selectedResult.title}`,
-        message: `I would like to request the following book to be added to the library:\n\nTitle: ${selectedResult.title}\nAuthor: ${selectedResult.authors.join(', ') || 'Unknown'}\nCategories: ${selectedResult.categories.join(', ') || 'N/A'}\n\nReason: Found via AI search — ${selectedResult.relevanceReason}`,
-        priority: 'medium',
+      const response = await fetch('/api/tickets/request-book', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subject: `Book Request: ${selectedResult.title}`,
+          message: `I would like to request the following book to be added to the library:\n\nTitle: ${selectedResult.title}\nAuthor: ${selectedResult.authors.join(', ') || 'Unknown'}\nCategories: ${selectedResult.categories.join(', ') || 'N/A'}`,
+          priority: 'medium',
+        }),
       });
-      await notifyAdmins(
-        user.id,
-        'ticket_created',
-        `Book Request: ${selectedResult.title}`,
-        `${profile?.name ?? 'A user'} requested a book to be added to the library.`,
-        `/admin/tickets?ticketId=${ticket.id}`
-      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to submit request.');
+      }
+
       setBookRequested(true);
       toast.success('Book request submitted!');
     } catch {
@@ -462,17 +463,13 @@ export function Header() {
             </div>
           </div>
 
-          {/* Score & Reason */}
-          <div className="space-y-3 rounded-lg border border-gray-100 bg-gray-50 p-4">
+          {/* Match score */}
+          <div className="rounded-lg border border-gray-100 bg-gray-50 p-4">
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium text-gray-700">Relevance Score</span>
               <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-sm font-semibold text-green-800">
                 {Math.round(selectedResult.relevanceScore * 100)}%
               </span>
-            </div>
-            <div>
-              <span className="text-sm font-medium text-gray-700">Why this book?</span>
-              <p className="mt-1 text-sm text-gray-600">{selectedResult.relevanceReason}</p>
             </div>
           </div>
 

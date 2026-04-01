@@ -8,10 +8,9 @@ import {
   markAsRead as markAsReadService,
   markAllAsRead as markAllAsReadService,
 } from '@/services/notifications';
-import type { Notification } from '@/types';
 
 export function useNotifications(userId: string | undefined) {
-  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [notifications, setNotifications] = useState<Awaited<ReturnType<typeof getNotifications>>>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
@@ -46,15 +45,13 @@ export function useNotifications(userId: string | undefined) {
       .on(
         'postgres_changes',
         {
-          event: 'INSERT',
+          event: '*',
           schema: 'public',
           table: 'notifications',
           filter: `user_id=eq.${userId}`,
         },
-        (payload) => {
-          const newNotification = payload.new as Notification;
-          setNotifications((prev) => [newNotification, ...prev]);
-          setUnreadCount((prev) => prev + 1);
+        () => {
+          refresh();
         }
       )
       .subscribe();
@@ -62,7 +59,7 @@ export function useNotifications(userId: string | undefined) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [userId]);
+  }, [userId, refresh]);
 
   const markAsRead = useCallback(async (notificationId: string) => {
     try {

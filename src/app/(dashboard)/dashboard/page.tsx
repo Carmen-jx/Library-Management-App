@@ -16,7 +16,6 @@ import {
   Tag,
   User,
   Clock,
-  Search,
   X,
   Users,
   RotateCcw,
@@ -34,8 +33,6 @@ import { timeAgo, formatDate } from '@/lib/utils';
 import { getUserRecommendations } from '@/services/recommendations';
 import { returnBook } from '@/services/borrows';
 import { logActivity } from '@/services/activity';
-import { createTicket } from '@/services/tickets';
-import { notifyAdmins } from '@/services/notifications';
 import { fetchAllDashboardData, type DashboardData, type FriendBorrow } from '@/lib/userDashboard';
 import type { BookRecommendation, Book, Borrow } from '@/types';
 
@@ -338,18 +335,21 @@ export default function DashboardPage() {
     if (!user || !selectedRec) return;
     setRequestingBook(true);
     try {
-      const ticket = await createTicket(user.id, {
-        subject: `Book Request: ${selectedRec.title}`,
-        message: `I would like to request the following book to be added to the library:\n\nTitle: ${selectedRec.title}\nAuthor: ${selectedRec.author}\nGenre: ${selectedRec.genre}\n\nReason: AI-recommended — ${selectedRec.reason}`,
-        priority: 'medium',
+      const response = await fetch('/api/tickets/request-book', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subject: `Book Request: ${selectedRec.title}`,
+          message: `I would like to request the following book to be added to the library:\n\nTitle: ${selectedRec.title}\nAuthor: ${selectedRec.author}\nGenre: ${selectedRec.genre}\n\nReason: AI-recommended — ${selectedRec.reason}`,
+          priority: 'medium',
+        }),
       });
-      await notifyAdmins(
-        user.id,
-        'ticket_created',
-        `Book Request: ${selectedRec.title}`,
-        `${profile?.name ?? 'A user'} requested a book to be added to the library.`,
-        `/admin/tickets?ticketId=${ticket.id}`
-      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to submit request.');
+      }
+
       setBookRequested(true);
       toast.success('Book request submitted!');
     } catch {
@@ -749,94 +749,63 @@ export default function DashboardPage() {
           )}
         </Card>
 
-        {/* Recent Searches */}
+        {/* Friends Recently Borrowed */}
         <Card>
           <Card.Header>
-            <h3 className="text-base font-semibold text-gray-900">Recent Searches</h3>
+            <h3 className="flex items-center gap-2 text-base font-semibold text-gray-900">
+              <Users className="h-4 w-4 text-indigo-600" />
+              Friends Recently Borrowed
+            </h3>
           </Card.Header>
-          {data && data.recentSearches.length === 0 ? (
+          {data && data.friendsBorrows.length === 0 ? (
             <Card.Body>
-              <p className="text-center text-sm text-gray-500">No recent searches</p>
+              <div className="rounded-lg border border-dashed border-gray-200 px-6 py-10 text-center">
+                <Users className="mx-auto h-8 w-8 text-gray-300" />
+                <p className="mt-3 text-sm text-gray-500">
+                  Connect with other members to see what they&apos;re reading!
+                </p>
+              </div>
             </Card.Body>
           ) : (
             <div className="divide-y divide-gray-100">
-              {data?.recentSearches.slice(0, 4).map((search, idx) => (
-                <Link
-                  key={`${search.query}-${idx}`}
-                  href={`/books?q=${encodeURIComponent(search.query)}`}
-                  className="flex items-center gap-3 px-6 py-3 transition-colors hover:bg-gray-50"
-                >
-                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 text-gray-400">
-                    <Search className="h-4 w-4" />
-                  </div>
+              {data?.friendsBorrows.slice(0, 4).map((fb) => (
+                <div key={fb.id} className="flex items-center gap-4 px-6 py-3">
+                  <Avatar
+                    src={fb.profile?.avatar_url}
+                    name={fb.profile?.name ?? ''}
+                    size="sm"
+                  />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-gray-900">{search.query}</p>
-                    <p className="text-xs text-gray-500">{timeAgo(search.date)}</p>
+                    <p className="truncate text-sm text-gray-900">
+                      <span className="font-medium">{fb.profile?.name}</span>
+                      {' borrowed '}
+                      <Link
+                        href={`/books/${fb.book_id}`}
+                        className="font-medium text-indigo-600 hover:text-indigo-700"
+                      >
+                        {fb.book?.title ?? 'a book'}
+                      </Link>
+                    </p>
+                    <p className="text-xs text-gray-500">{timeAgo(fb.borrowed_at)}</p>
                   </div>
-                  <ArrowRight className="h-4 w-4 text-gray-300" />
-                </Link>
+                  {fb.book?.cover_url && (
+                    <div className="relative h-10 w-7 flex-shrink-0 overflow-hidden rounded bg-gray-100">
+                      <Image
+                        src={fb.book.cover_url}
+                        alt=""
+                        fill
+                        className="object-cover"
+                        sizes="28px"
+                        unoptimized
+                      />
+                    </div>
+                  )}
+                </div>
               ))}
             </div>
           )}
         </Card>
       </div>
-
-      {/* Social — Friends Recently Borrowed */}
-      <Card>
-        <Card.Header>
-          <h3 className="flex items-center gap-2 text-base font-semibold text-gray-900">
-            <Users className="h-4 w-4 text-indigo-600" />
-            Friends Recently Borrowed
-          </h3>
-        </Card.Header>
-        {data && data.friendsBorrows.length === 0 ? (
-          <Card.Body>
-            <div className="rounded-lg border border-dashed border-gray-200 px-6 py-10 text-center">
-              <Users className="mx-auto h-8 w-8 text-gray-300" />
-              <p className="mt-3 text-sm text-gray-500">
-                Connect with other members to see what they&apos;re reading!
-              </p>
-            </div>
-          </Card.Body>
-        ) : (
-          <div className="divide-y divide-gray-100">
-            {data?.friendsBorrows.slice(0, 4).map((fb) => (
-              <div key={fb.id} className="flex items-center gap-4 px-6 py-3">
-                <Avatar
-                  src={fb.profile?.avatar_url}
-                  name={fb.profile?.name ?? ''}
-                  size="sm"
-                />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm text-gray-900">
-                    <span className="font-medium">{fb.profile?.name}</span>
-                    {' borrowed '}
-                    <Link
-                      href={`/books/${fb.book_id}`}
-                      className="font-medium text-indigo-600 hover:text-indigo-700"
-                    >
-                      {fb.book?.title ?? 'a book'}
-                    </Link>
-                  </p>
-                  <p className="text-xs text-gray-500">{timeAgo(fb.borrowed_at)}</p>
-                </div>
-                {fb.book?.cover_url && (
-                  <div className="relative h-10 w-7 flex-shrink-0 overflow-hidden rounded bg-gray-100">
-                    <Image
-                      src={fb.book.cover_url}
-                      alt=""
-                      fill
-                      className="object-cover"
-                      sizes="28px"
-                      unoptimized
-                    />
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
 
       {/* Quick Actions */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
