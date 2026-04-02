@@ -1,10 +1,7 @@
-import { createServerSupabaseClient, createAdminClient } from '@/lib/supabase/server';
-import { naturalLanguageBookSearch } from '@/lib/api/ai';
-import {
-  generateEmbedding,
-  generateEmbeddingsBatch,
-  buildBookEmbeddingText,
-} from '@/lib/embeddings';
+import { inferGenresFromQuery } from '@/lib/api/ai';
+import { buildBookEmbeddingText, generateEmbedding } from '@/lib/embeddings';
+import { createAdminClient, createServerSupabaseClient } from '@/lib/supabase/server';
+import { normalizeGenres } from '@/lib/utils';
 import type { Book } from '@/types';
 
 export interface HybridSearchResult {
@@ -13,77 +10,150 @@ export interface HybridSearchResult {
   source: 'semantic' | 'keyword' | 'both';
 }
 
-// ---------------------------------------------------------------------------
-// Cosine similarity between two vectors
-// ---------------------------------------------------------------------------
+const DEFAULT_RESULT_LIMIT = 20;
+const SEARCH_FETCH_LIMIT = 40;
+const FEEDBACK_MATCH_LIMIT = 100;
+const FEEDBACK_SIMILARITY_THRESHOLD = 0.35;
+const MIN_FEEDBACK_VOTES = 1;
+const MATCH_THRESHOLD = 0.1;
+const MIN_RESULT_SCORE = 0.12;
+const SEMANTIC_WEIGHT = 0.6;
+const KEYWORD_WEIGHT = 0.4;
+const BOTH_MATCH_BOOST = 0.05;
+const FEEDBACK_BOOST_WEIGHT = 0.15;
+const GENRE_MATCH_WEIGHT = 0.3;
+const GENRE_MISMATCH_PENALTY = 0.2;
 
-function cosineSimilarity(a: number[], b: number[]): number {
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-  const denom = Math.sqrt(normA) * Math.sqrt(normB);
-  return denom === 0 ? 0 : dot / denom;
-}
-
-// ---------------------------------------------------------------------------
-// On-demand embedding backfill: generate, persist, and score
-// ---------------------------------------------------------------------------
-
-const BACKFILL_BATCH_LIMIT = 20;
-
-async function backfillAndScore(
-  books: Book[],
-  queryEmbedding: number[]
-): Promise<Map<string, number>> {
-  const scores = new Map<string, number>();
-  if (books.length === 0) return scores;
-
-  const batch = books.slice(0, BACKFILL_BATCH_LIMIT);
-  const texts = batch.map((book) => buildBookEmbeddingText(book));
-  const embeddings = await generateEmbeddingsBatch(texts);
-
-  // Persist embeddings via admin client (bypasses RLS)
-  const adminClient = createAdminClient();
-  await Promise.allSettled(
-    batch.map((book, i) =>
-      adminClient
-        .from('books')
-        .update({ embedding: JSON.stringify(embeddings[i]) })
-        .eq('id', book.id)
-    )
-  );
-
-  // Compute cosine similarity locally for the current search
-  for (let i = 0; i < batch.length; i++) {
-    scores.set(batch[i].id, cosineSimilarity(queryEmbedding, embeddings[i]));
-  }
-
-  return scores;
-}
-
-// ---------------------------------------------------------------------------
-// Ensure a single book has an embedding (call after insert)
-// ---------------------------------------------------------------------------
-
-export async function ensureBookEmbedding(book: {
+type BookEmbeddingInput = {
   id: string;
   title: string;
   author: string;
   description?: string | null;
   genre?: string[];
-}): Promise<void> {
+};
+
+type SemanticSearchRow = Book & {
+  similarity: number;
+};
+
+type FeedbackScoreRow = {
+  book_id: string;
+  feedback_score: number;
+  vote_count: number;
+};
+
+type RankedCandidate = {
+  book: Book;
+  semanticScore: number;
+  keywordScore: number;
+};
+
+type SupabaseClient = ReturnType<typeof createServerSupabaseClient>;
+
+function serializeEmbedding(embedding: number[]): string {
+  return JSON.stringify(embedding);
+}
+
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
+}
+
+function keywordRankScore(index: number, total: number): number {
+  if (total <= 0) return 0;
+  return clamp01(1 - index / total);
+}
+
+function normalizeFeedbackQuery(query: string): string {
+  return query.trim().replace(/\s+/g, ' ');
+}
+
+function rankHybridResults(
+  semanticResults: SemanticSearchRow[],
+  keywordResults: Book[],
+  feedbackMap: Map<string, number>,
+  requestedGenres: string[]
+): HybridSearchResult[] {
+  const merged = new Map<string, RankedCandidate>();
+  const keywordTotal = keywordResults.length;
+
+  for (const row of semanticResults) {
+    merged.set(row.id, {
+      book: row,
+      semanticScore: clamp01(row.similarity),
+      keywordScore: 0,
+    });
+  }
+
+  for (let index = 0; index < keywordResults.length; index += 1) {
+    const book = keywordResults[index];
+    const keywordScore = keywordRankScore(index, keywordTotal);
+    const existing = merged.get(book.id);
+
+    if (existing) {
+      existing.book = book;
+      existing.keywordScore = Math.max(existing.keywordScore, keywordScore);
+      continue;
+    }
+
+    merged.set(book.id, {
+      book,
+      semanticScore: 0,
+      keywordScore,
+    });
+  }
+
+  return Array.from(merged.values())
+    .map(({ book, semanticScore, keywordScore }) => {
+      const matchedBoth = semanticScore > 0 && keywordScore > 0;
+      const feedbackScore = feedbackMap.get(book.id) ?? 0;
+      const feedbackBoost = Math.tanh(feedbackScore) * FEEDBACK_BOOST_WEIGHT;
+
+      let genreBoost = 0;
+      if (requestedGenres.length > 0) {
+        const bookGenres = normalizeGenres(book.genre ?? []);
+        const matchedCount = requestedGenres.filter((g) =>
+          bookGenres.includes(g)
+        ).length;
+        if (matchedCount > 0) {
+          genreBoost = (matchedCount / requestedGenres.length) * GENRE_MATCH_WEIGHT;
+        } else {
+          genreBoost = -GENRE_MISMATCH_PENALTY;
+        }
+      }
+
+      const score = clamp01(
+        semanticScore * SEMANTIC_WEIGHT +
+          keywordScore * KEYWORD_WEIGHT +
+          (matchedBoth ? BOTH_MATCH_BOOST : 0) +
+          feedbackBoost +
+          genreBoost
+      );
+
+      let source: HybridSearchResult['source'] = 'keyword';
+      if (matchedBoth) {
+        source = 'both';
+      } else if (semanticScore > 0) {
+        source = 'semantic';
+      }
+
+      return { book, score, source };
+    })
+    .filter((result) => result.score >= MIN_RESULT_SCORE)
+    .sort((left, right) => right.score - left.score)
+    .slice(0, DEFAULT_RESULT_LIMIT);
+}
+
+export async function ensureBookEmbedding(
+  book: BookEmbeddingInput
+): Promise<void> {
   const text = buildBookEmbeddingText(book);
   const embedding = await generateEmbedding(text);
 
   const adminClient = createAdminClient();
   const { error } = await adminClient
     .from('books')
-    .update({ embedding: JSON.stringify(embedding) })
+    .update({ embedding: serializeEmbedding(embedding) })
     .eq('id', book.id);
 
   if (error) {
@@ -94,158 +164,34 @@ export async function ensureBookEmbedding(book: {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Hybrid search: semantic (embedding) + keyword (full-text) + genre
-// ---------------------------------------------------------------------------
-
 export async function hybridBookSearch(
-  query: string
+  query: string,
 ): Promise<HybridSearchResult[]> {
-  const trimmed = query.trim();
-  if (!trimmed) return [];
+  const trimmedQuery = query.trim();
+  if (!trimmedQuery) return [];
 
-  // 1. Parse structured params + generate query embedding in parallel
-  const [structuredParams, queryEmbedding] = await Promise.all([
-    naturalLanguageBookSearch(trimmed),
-    generateEmbedding(trimmed),
+  const requestedGenres = inferGenresFromQuery(trimmedQuery);
+  const supabase = createServerSupabaseClient();
+
+  const [semanticResults, keywordResults, feedbackMap] = await Promise.all([
+    semanticSearch(supabase, trimmedQuery),
+    keywordSearch(supabase, trimmedQuery),
+    fetchFeedbackMap(supabase, normalizeFeedbackQuery(trimmedQuery)),
   ]);
 
-  // 2. Run semantic search + keyword search in parallel
-  const [semanticResults, keywordResults] = await Promise.all([
-    semanticSearch(queryEmbedding),
-    keywordSearch(structuredParams.searchQuery || trimmed),
-  ]);
-
-  // 3. Detect keyword-hit books missing from semantic results and backfill
-  const semanticIds = new Set(semanticResults.map((r) => r.id));
-  const missingFromSemantic = keywordResults.filter(
-    (b) => !semanticIds.has(b.id)
-  );
-
-  let backfillScores = new Map<string, number>();
-
-  if (missingFromSemantic.length > 0) {
-    try {
-      // Check which of these actually lack embeddings in the DB
-      const supabase = createServerSupabaseClient();
-      const { data: withEmbedding } = await supabase
-        .from('books')
-        .select('id')
-        .in(
-          'id',
-          missingFromSemantic.map((b) => b.id)
-        )
-        .not('embedding', 'is', null);
-
-      const hasEmbeddingIds = new Set(
-        (withEmbedding ?? []).map((row: { id: string }) => row.id)
-      );
-      const needsBackfill = missingFromSemantic.filter(
-        (b) => !hasEmbeddingIds.has(b.id)
-      );
-
-      if (needsBackfill.length > 0) {
-        backfillScores = await backfillAndScore(needsBackfill, queryEmbedding);
-      }
-    } catch (err) {
-      console.error(
-        'Embedding backfill failed:',
-        err instanceof Error ? err.message : err
-      );
-    }
-  }
-
-  // 4. Combine and score
-  const scoreMap = new Map<
-    string,
-    { book: Book; semantic: number; keyword: number; genre: number }
-  >();
-
-  // Semantic results from pgvector
-  for (const result of semanticResults) {
-    scoreMap.set(result.id, {
-      book: result.book,
-      semantic: result.similarity,
-      keyword: 0,
-      genre: 0,
-    });
-  }
-
-  // Keyword results
-  const kwTotal = keywordResults.length || 1;
-  for (let i = 0; i < keywordResults.length; i++) {
-    const book = keywordResults[i];
-    const kwScore = 1 - i / kwTotal;
-    const existing = scoreMap.get(book.id);
-    if (existing) {
-      existing.keyword = kwScore;
-      existing.book = book; // prefer full book data
-    } else {
-      // Book wasn't in semantic results — use backfill similarity if available
-      scoreMap.set(book.id, {
-        book,
-        semantic: backfillScores.get(book.id) ?? 0,
-        keyword: kwScore,
-        genre: 0,
-      });
-    }
-  }
-
-  // Genre boost from structured params
-  const inferredGenre = structuredParams.genre?.toLowerCase();
-  if (inferredGenre) {
-    Array.from(scoreMap.values()).forEach((entry) => {
-      const bookGenres = (entry.book.genre ?? []).map((g: string) =>
-        g.toLowerCase()
-      );
-      if (bookGenres.some((g: string) => g.includes(inferredGenre))) {
-        entry.genre = 1;
-      }
-    });
-  }
-
-  // 5. Combined score: semantic 0.6 + keyword 0.3 + genre 0.1
-  const results: HybridSearchResult[] = [];
-
-  for (const entry of Array.from(scoreMap.values())) {
-    const score =
-      entry.semantic * 0.6 + entry.keyword * 0.3 + entry.genre * 0.1;
-
-    let source: HybridSearchResult['source'] = 'keyword';
-    if (entry.semantic > 0 && entry.keyword > 0) {
-      source = 'both';
-    } else if (entry.semantic > 0) {
-      source = 'semantic';
-    }
-
-    results.push({ book: entry.book, score, source });
-  }
-
-  // 6. Sort by score descending and return top 20
-  results.sort((a, b) => b.score - a.score);
-  return results.slice(0, 20);
-}
-
-// ---------------------------------------------------------------------------
-// Semantic search via pgvector RPC
-// ---------------------------------------------------------------------------
-
-interface SemanticResult {
-  id: string;
-  book: Book;
-  similarity: number;
+  return rankHybridResults(semanticResults, keywordResults, feedbackMap, requestedGenres);
 }
 
 async function semanticSearch(
-  queryEmbedding: number[]
-): Promise<SemanticResult[]> {
+  supabase: SupabaseClient,
+  query: string
+): Promise<SemanticSearchRow[]> {
   try {
-    const supabase = createServerSupabaseClient();
-
+    const queryEmbedding = await generateEmbedding(query);
     const { data, error } = await supabase.rpc('match_books_by_embedding', {
       query_embedding: JSON.stringify(queryEmbedding),
-      match_threshold: 0.1,
-      match_count: 20,
+      match_threshold: MATCH_THRESHOLD,
+      match_count: SEARCH_FETCH_LIMIT,
     });
 
     if (error) {
@@ -253,53 +199,77 @@ async function semanticSearch(
       return [];
     }
 
-    return (data ?? []).map(
-      (row: Book & { similarity: number }) => ({
-        id: row.id,
-        book: {
-          id: row.id,
-          title: row.title,
-          author: row.author,
-          genre: row.genre,
-          description: row.description,
-          cover_url: row.cover_url,
-          metadata: row.metadata,
-          available: row.available,
-          open_library_key: row.open_library_key,
-          created_at: row.created_at,
-        } as Book,
-        similarity: row.similarity as number,
-      })
-    );
-  } catch (err) {
+    return (data ?? []) as SemanticSearchRow[];
+  } catch (error) {
     console.error(
       'Semantic search failed:',
-      err instanceof Error ? err.message : err
+      error instanceof Error ? error.message : error
     );
     return [];
   }
 }
 
-// ---------------------------------------------------------------------------
-// Keyword search via existing full-text search RPC
-// ---------------------------------------------------------------------------
-
-async function keywordSearch(query: string): Promise<Book[]> {
+async function keywordSearch(
+  supabase: SupabaseClient,
+  query: string
+): Promise<Book[]> {
   try {
-    const supabase = createServerSupabaseClient();
-    const { data, error } = await supabase.rpc('search_books', {
-      search_query: query,
-    });
+    const { data, error } = await supabase
+      .rpc('search_books', {
+        search_query: query,
+      })
+      .limit(SEARCH_FETCH_LIMIT);
+
     if (error) {
       console.error('Keyword search error:', error.message);
       return [];
     }
-    return (data ?? []) as Book[];
-  } catch (err) {
+
+    return ((data ?? []) as Book[]).slice(0, SEARCH_FETCH_LIMIT);
+  } catch (error) {
     console.error(
       'Keyword search failed:',
-      err instanceof Error ? err.message : err
+      error instanceof Error ? error.message : error
     );
     return [];
+  }
+}
+
+async function fetchFeedbackMap(
+  supabase: SupabaseClient,
+  query: string
+): Promise<Map<string, number>> {
+  if (!query) return new Map();
+
+  try {
+    const { data, error } = await supabase.rpc('match_book_search_feedback', {
+      search_query: query,
+      similarity_threshold: FEEDBACK_SIMILARITY_THRESHOLD,
+      min_votes: MIN_FEEDBACK_VOTES,
+      match_count: FEEDBACK_MATCH_LIMIT,
+    });
+
+    if (error) {
+      console.error('Feedback fetch error:', error.message);
+      return new Map();
+    }
+
+    const feedbackMap = new Map<string, number>();
+
+    for (const row of (data ?? []) as FeedbackScoreRow[]) {
+      if (!row.book_id || row.vote_count < MIN_FEEDBACK_VOTES) {
+        continue;
+      }
+
+      feedbackMap.set(row.book_id, row.feedback_score);
+    }
+
+    return feedbackMap;
+  } catch (error) {
+    console.error(
+      'Feedback fetch failed:',
+      error instanceof Error ? error.message : error
+    );
+    return new Map();
   }
 }

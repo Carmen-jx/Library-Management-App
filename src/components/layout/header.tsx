@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
-import { Menu, Search, Loader2, BookOpen, X, CheckCircle, AlertCircle, ArrowLeft } from 'lucide-react';
+import { Menu, Search, Loader2, BookOpen, X, CheckCircle, AlertCircle, ArrowLeft, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { Avatar } from '@/components/ui/avatar';
 import { useAuth } from '@/hooks/useAuth';
 import { useSidebarStore } from '@/components/layout/sidebar';
@@ -74,6 +74,7 @@ export function Header() {
 
   // Search state
   const [searchOpen, setSearchOpen] = useState(false);
+  const [searchMode, setSearchMode] = useState<'basic' | 'ai'>('basic');
   const [nlQuery, setNlQuery] = useState('');
   const [nlResults, setNlResults] = useState<AISearchResult[]>([]);
   const [nlLoading, setNlLoading] = useState(false);
@@ -86,6 +87,9 @@ export function Header() {
   const [checkingLibrary, setCheckingLibrary] = useState(false);
   const [requestingBook, setRequestingBook] = useState(false);
   const [bookRequested, setBookRequested] = useState(false);
+
+  // Feedback state (AI search mode only)
+  const [feedbackGiven, setFeedbackGiven] = useState<Record<string, boolean | null>>({});
 
   const dropdownRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -136,6 +140,10 @@ export function Header() {
   const handleSearch = async () => {
     if (!nlQuery.trim()) return;
 
+    if (searchMode === 'basic') {
+      return handleBasicSearch();
+    }
+
     setNlLoading(true);
     setNlError(null);
     setHasSearched(true);
@@ -159,6 +167,53 @@ export function Header() {
     } finally {
       setNlLoading(false);
     }
+  };
+
+  const handleBasicSearch = async () => {
+    if (!nlQuery.trim()) return;
+
+    setNlLoading(true);
+    setNlError(null);
+    setHasSearched(true);
+    try {
+      const supabase = createClient();
+      const q = nlQuery.trim();
+      const { data, error } = await supabase
+        .from('books')
+        .select('*')
+        .or(`title.ilike.%${q}%,author.ilike.%${q}%`)
+        .order('title')
+        .limit(20);
+
+      if (error) throw error;
+
+      const mapped: AISearchResult[] = (data as Book[]).map((book) => ({
+        id: book.id,
+        title: book.title,
+        authors: [book.author],
+        description: book.description ?? null,
+        coverImage: book.cover_url ?? null,
+        categories: book.genre ?? [],
+        relevanceScore: 1,
+        relevanceReason: 'Matched from library',
+        pageCount: (book.metadata?.pageCount as number) ?? null,
+        averageRating: null,
+      }));
+
+      setNlResults(mapped);
+    } catch (err) {
+      console.error('Basic search failed:', err);
+      setNlError(err instanceof Error ? err.message : 'Search failed');
+    } finally {
+      setNlLoading(false);
+    }
+  };
+
+  const handleSwitchMode = (mode: 'basic' | 'ai') => {
+    setSearchMode(mode);
+    setNlResults([]);
+    setNlError(null);
+    setHasSearched(false);
   };
 
   const handleToggleSearch = () => {
@@ -217,6 +272,32 @@ export function Header() {
     }
   };
 
+  const handleFeedback = async (bookId: string, isRelevant: boolean) => {
+    if (!nlQuery.trim()) return;
+
+    setFeedbackGiven((prev) => ({ ...prev, [bookId]: isRelevant }));
+
+    try {
+      const response = await fetch('/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: nlQuery.trim(),
+          bookId,
+          isRelevant,
+        }),
+      });
+
+      if (!response.ok) {
+        setFeedbackGiven((prev) => ({ ...prev, [bookId]: null }));
+        toast.error('Failed to submit feedback.');
+      }
+    } catch {
+      setFeedbackGiven((prev) => ({ ...prev, [bookId]: null }));
+      toast.error('Failed to submit feedback.');
+    }
+  };
+
   return (
     <>
     <header className="sticky top-0 z-20 flex h-16 items-center gap-4 border-b border-gray-200 bg-white px-4 sm:px-6">
@@ -248,7 +329,7 @@ export function Header() {
                 ? 'bg-indigo-50 text-indigo-600'
                 : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'
             }`}
-            aria-label="AI Search"
+            aria-label="Search"
           >
             {searchOpen ? <X className="h-5 w-5" /> : <Search className="h-5 w-5" />}
           </button>
@@ -256,14 +337,42 @@ export function Header() {
           {/* Search Dropdown */}
           {searchOpen && (
             <div className="absolute right-0 top-full mt-2 w-[min(600px,calc(100vw-2rem))] rounded-xl border border-gray-200 bg-white shadow-xl">
-              {/* Header */}
+              {/* Header + Mode Toggle */}
               <div className="border-b border-gray-100 px-5 py-4">
-                <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-900">
-                  <Search className="h-4 w-4 text-indigo-600" />
-                  Natural Language Search
-                </h3>
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+                    <Search className="h-4 w-4 text-indigo-600" />
+                    {searchMode === 'basic' ? 'Library Search' : 'AI Search'}
+                  </h3>
+                  <div className="inline-flex rounded-lg bg-gray-100 p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => handleSwitchMode('basic')}
+                      className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                        searchMode === 'basic'
+                          ? 'bg-white text-gray-900 shadow-sm'
+                          : 'text-gray-500 hover:text-gray-700'
+                      }`}
+                    >
+                      Library
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSwitchMode('ai')}
+                      className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                        searchMode === 'ai'
+                          ? 'bg-white text-gray-900 shadow-sm'
+                          : 'text-gray-500 hover:text-gray-700'
+                      }`}
+                    >
+                      AI Search
+                    </button>
+                  </div>
+                </div>
                 <p className="mt-1 text-xs text-gray-500">
-                  Describe what you&apos;re looking for in your own words and let AI find the best matches.
+                  {searchMode === 'basic'
+                    ? 'Search books by title or author.'
+                    : "Describe what you're looking for in your own words and let AI find the best matches."}
                 </p>
               </div>
 
@@ -272,7 +381,7 @@ export function Header() {
                 <input
                   ref={inputRef}
                   type="text"
-                  placeholder="e.g., A dark fantasy book with a strong female lead"
+                  placeholder={searchMode === 'basic' ? 'Search by title or author...' : 'e.g., A dark fantasy book with a strong female lead'}
                   value={nlQuery}
                   onChange={(e) => setNlQuery(e.target.value)}
                   onKeyDown={(e) => {
@@ -358,9 +467,11 @@ export function Header() {
                             <h4 className="text-sm font-semibold leading-tight line-clamp-2 text-gray-900">
                               {result.title}
                             </h4>
-                            <span className="inline-flex flex-shrink-0 items-center rounded-full bg-green-50 px-1.5 py-0.5 text-xs font-semibold text-green-700">
-                              {Math.round(result.relevanceScore * 100)}%
-                            </span>
+                            {searchMode === 'ai' && (
+                              <span className="inline-flex flex-shrink-0 items-center rounded-full bg-green-50 px-1.5 py-0.5 text-xs font-semibold text-green-700">
+                                {Math.round(result.relevanceScore * 100)}%
+                              </span>
+                            )}
                           </div>
                           <p className="text-xs text-gray-500 mt-0.5">
                             by {result.authors.join(', ') || 'Unknown'}
@@ -464,14 +575,48 @@ export function Header() {
           </div>
 
           {/* Match score */}
-          <div className="rounded-lg border border-gray-100 bg-gray-50 p-4">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-gray-700">Relevance Score</span>
-              <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-sm font-semibold text-green-800">
-                {Math.round(selectedResult.relevanceScore * 100)}%
-              </span>
+          {searchMode === 'ai' && (
+            <div className="rounded-lg border border-gray-100 bg-gray-50 p-4">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-gray-700">Relevance Score</span>
+                <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-sm font-semibold text-green-800">
+                  {Math.round(selectedResult.relevanceScore * 100)}%
+                </span>
+              </div>
             </div>
-          </div>
+          )}
+
+          {/* Search Feedback (AI mode only, requires library match for valid book_id) */}
+          {searchMode === 'ai' && !checkingLibrary && libraryMatch && (
+            <div className="rounded-lg border border-gray-100 bg-gray-50 p-4">
+              <p className="text-sm font-medium text-gray-700">Was this result relevant to your search?</p>
+              {feedbackGiven[libraryMatch.id] != null ? (
+                <div className="mt-2 flex items-center gap-2 text-sm text-gray-500">
+                  <CheckCircle className="h-4 w-4 text-green-500" />
+                  Thanks for your feedback!
+                </div>
+              ) : (
+                <div className="mt-2 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleFeedback(libraryMatch.id, true)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:border-green-300 hover:bg-green-50 hover:text-green-700 transition-colors"
+                  >
+                    <ThumbsUp className="h-3.5 w-3.5" />
+                    Relevant
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleFeedback(libraryMatch.id, false)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:border-red-300 hover:bg-red-50 hover:text-red-700 transition-colors"
+                  >
+                    <ThumbsDown className="h-3.5 w-3.5" />
+                    Not Relevant
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Library Availability */}
           <div className="rounded-lg border border-gray-200 p-4">

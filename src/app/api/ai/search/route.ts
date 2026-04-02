@@ -1,39 +1,77 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { naturalLanguageBookSearch, rankSearchResultsLocally } from '@/lib/api/ai';
-import { searchOpenLibrary, getCoverUrl } from '@/lib/api/open-library';
+import { inferGenresFromQuery } from '@/lib/api/ai';
 import { hybridBookSearch } from '@/lib/hybridSearch';
-import type { OpenLibraryWork } from '@/types';
+import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { scoreBookCandidate, buildQuerySignals } from '@/lib/search/ranking';
+import type { Book } from '@/types';
 
-function buildSearchCandidates(
-  originalQuery: string,
-  optimizedQuery: string,
-  structuredParams: {
-    title?: string;
-    author?: string;
-    genre?: string;
-    keywords?: string[];
-    concepts?: string[];
-  }
-): string[] {
-  const titleAuthor = [structuredParams.title, structuredParams.author]
-    .filter(Boolean)
-    .join(' ')
-    .trim();
-  const keywordPhrase = (structuredParams.keywords ?? []).slice(0, 4).join(' ').trim();
-  const conceptPhrase = (structuredParams.concepts ?? []).slice(0, 3).join(' ').trim();
-  const candidates = [
-    [optimizedQuery, structuredParams.genre].filter(Boolean).join(' ').trim(),
-    [titleAuthor, structuredParams.genre].filter(Boolean).join(' ').trim(),
-    [keywordPhrase, structuredParams.genre].filter(Boolean).join(' ').trim(),
-    [conceptPhrase, structuredParams.genre].filter(Boolean).join(' ').trim(),
-    optimizedQuery,
-    titleAuthor,
-    originalQuery,
-  ];
+function formatBookResult(book: Book, score: number, reason: string) {
+  return {
+    id: book.id,
+    title: book.title,
+    authors: [book.author],
+    description: book.description,
+    coverImage: book.cover_url,
+    publishedDate: null,
+    categories: book.genre ?? [],
+    relevanceScore: score,
+    relevanceReason: reason,
+    pageCount: null,
+    averageRating: null,
+    ratingsCount: null,
+    available: book.available,
+    bookId: book.id,
+  };
+}
 
-  return Array.from(
-    new Set(candidates.map((candidate) => candidate.trim()).filter(Boolean))
+async function genreFallback(
+  query: string,
+  genres: string[],
+): Promise<Book[]> {
+  const supabase = createServerSupabaseClient();
+
+  const genreQueries = genres.slice(0, 3).map((genre) =>
+    supabase.from('books').select('*').contains('genre', [genre]).limit(12),
   );
+
+  const keywordQuery = supabase
+    .rpc('search_books', { search_query: query })
+    .limit(20);
+
+  const [genreResults, keywordResult] = await Promise.all([
+    Promise.all(genreQueries),
+    keywordQuery,
+  ]);
+
+  const seen = new Set<string>();
+  const candidates: Book[] = [];
+
+  for (const { data } of genreResults) {
+    for (const book of (data ?? []) as Book[]) {
+      if (!seen.has(book.id)) {
+        seen.add(book.id);
+        candidates.push(book);
+      }
+    }
+  }
+
+  if (!keywordResult.error) {
+    for (const book of (keywordResult.data ?? []) as Book[]) {
+      if (!seen.has(book.id)) {
+        seen.add(book.id);
+        candidates.push(book);
+      }
+    }
+  }
+
+  const signals = buildQuerySignals(query, { searchQuery: query, genres });
+
+  return candidates
+    .map((book) => ({ book, score: scoreBookCandidate(book, signals) }))
+    .filter(({ score }) => score >= 0.1)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 12)
+    .map(({ book }) => book);
 }
 
 export async function POST(request: NextRequest) {
@@ -44,13 +82,13 @@ export async function POST(request: NextRequest) {
     if (!query || typeof query !== 'string' || query.trim().length === 0) {
       return NextResponse.json(
         { error: 'A non-empty query string is required.' },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     const trimmedQuery = query.trim();
 
-    // --- Hybrid search path: try local books with embeddings first ---
+    // Primary: hybrid search (embedding + keyword + genre + feedback)
     try {
       const hybridResults = await hybridBookSearch(trimmedQuery);
 
@@ -58,112 +96,45 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
           query: trimmedQuery,
           source: 'hybrid',
-          results: hybridResults.map((result) => ({
-            id: result.book.id,
-            title: result.book.title,
-            authors: [result.book.author],
-            description: result.book.description,
-            coverImage: result.book.cover_url,
-            publishedDate: null,
-            categories: result.book.genre ?? [],
-            relevanceScore: result.score,
-            relevanceReason:
-              result.source === 'both'
+          results: hybridResults.map((r) => {
+            const reason =
+              r.source === 'both'
                 ? 'Matched by semantic similarity and keyword search.'
-                : result.source === 'semantic'
+                : r.source === 'semantic'
                   ? 'Matched by semantic similarity.'
-                  : 'Matched by keyword search.',
-            pageCount: null,
-            averageRating: null,
-            ratingsCount: null,
-            available: result.book.available,
-            bookId: result.book.id,
-          })),
+                  : 'Matched by keyword search.';
+            return formatBookResult(r.book, r.score, reason);
+          }),
           totalResults: hybridResults.length,
         });
       }
     } catch (err) {
       console.error(
-        'Hybrid search failed, falling back to Open Library:',
-        err instanceof Error ? err.message : err
+        'Hybrid search failed:',
+        err instanceof Error ? err.message : err,
       );
     }
 
-    // --- Fallback: Open Library search pipeline ---
+    // Fallback: genre + keyword search against local library
+    const requestedGenres = inferGenresFromQuery(trimmedQuery);
+    const fallbackResults = await genreFallback(trimmedQuery, requestedGenres);
 
-    // Step 1: Extract structured search parameters using AI
-    const structuredParams = await naturalLanguageBookSearch(trimmedQuery);
-
-    // Step 2: Search Open Library with the optimized query
-    const searchCandidates = buildSearchCandidates(
-      trimmedQuery,
-      structuredParams.searchQuery || trimmedQuery,
-      structuredParams
-    );
-
-    let openLibraryResults: OpenLibraryWork[] = [];
-    let lastSearchError: Error | null = null;
-
-    for (const candidate of searchCandidates) {
-      try {
-        const results = await searchOpenLibrary(candidate, 20);
-        if (results.length > 0) {
-          openLibraryResults = results;
-          break;
-        }
-
-        if (openLibraryResults.length === 0) {
-          openLibraryResults = results;
-        }
-      } catch (error) {
-        lastSearchError =
-          error instanceof Error
-            ? error
-            : new Error('Open Library search failed');
-      }
-    }
-
-    if (openLibraryResults.length === 0) {
+    if (fallbackResults.length > 0) {
       return NextResponse.json({
         query: trimmedQuery,
-        structuredParams,
-        results: [],
-        message: lastSearchError
-          ? 'Book search is temporarily unavailable. Please try again in a moment.'
-          : 'No books found matching your search.',
+        source: 'local_fallback',
+        results: fallbackResults.map((book) =>
+          formatBookResult(book, 0.25, 'Closest match from your library.'),
+        ),
+        totalResults: fallbackResults.length,
       });
     }
 
-    // Step 3: Rank results locally (no LLM call)
-    const rankedResults = rankSearchResultsLocally(
-      trimmedQuery,
-      openLibraryResults,
-      structuredParams,
-    );
-
-    const response = {
+    return NextResponse.json({
       query: trimmedQuery,
-      structuredParams,
-      results: rankedResults.map((result) => {
-        return {
-          id: result.book.key,
-          title: result.book.title,
-          authors: result.book.author_name || [],
-          description: null,
-          coverImage: getCoverUrl(result.book.cover_i),
-          publishedDate: result.book.first_publish_year || null,
-          categories: result.book.subject || [],
-          relevanceScore: result.score,
-          relevanceReason: result.reason,
-          pageCount: result.book.number_of_pages_median || null,
-          averageRating: result.book.ratings_average || null,
-          ratingsCount: result.book.ratings_count || null,
-        };
-      }),
-      totalResults: rankedResults.length,
-    };
-
-    return NextResponse.json(response);
+      results: [],
+      message: 'No books found matching your search.',
+    });
   } catch (error) {
     console.error('AI search API error:', error);
 
@@ -172,7 +143,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(
       { error: `Failed to process search: ${message}` },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

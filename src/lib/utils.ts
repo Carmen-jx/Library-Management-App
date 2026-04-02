@@ -58,6 +58,8 @@ export const GENRES = [
   'Graphic Novel',
 ] as const;
 
+export const MAX_BOOK_GENRES = 6;
+
 const GENRE_ALIASES: Record<string, (typeof GENRES)[number]> = {
   fiction: 'Fiction',
   literary_fiction: 'Fiction',
@@ -87,7 +89,18 @@ const GENRE_ALIASES: Record<string, (typeof GENRES)[number]> = {
   crime: 'Mystery',
   thriller: 'Thriller',
   suspense: 'Thriller',
+  'romantic suspense': 'Thriller',
   romance: 'Romance',
+  'romance fiction': 'Romance',
+  romantic: 'Romance',
+  'romantic fiction': 'Romance',
+  'historical romance': 'Romance',
+  'contemporary romance': 'Romance',
+  'paranormal romance': 'Romance',
+  'love stories': 'Romance',
+  'love story': 'Romance',
+  courtship: 'Romance',
+  relationships: 'Romance',
   horror: 'Horror',
   gothic: 'Horror',
   biography: 'Biography',
@@ -118,6 +131,12 @@ const GENRE_ALIASES: Record<string, (typeof GENRES)[number]> = {
   adventure: 'Adventure',
   children: 'Children',
   "children's literature": 'Children',
+  "children's fiction": 'Children',
+  'juvenile fiction': 'Children',
+  juvenile_fiction: 'Children',
+  'picture books': 'Children',
+  'picture book': 'Children',
+  'middle grade': 'Children',
   juvenile: 'Children',
   young_adult: 'Young Adult',
   'young adult': 'Young Adult',
@@ -133,24 +152,94 @@ const GENRE_LOOKUP = new Map(
   GENRES.map((genre) => [genre.toLowerCase(), genre])
 );
 
+const SORTED_GENRE_ALIASES = Object.entries(GENRE_ALIASES).sort(
+  ([left], [right]) => right.length - left.length
+);
+
+const SPECIFIC_FICTION_GENRES = new Set([
+  'Science Fiction',
+  'Fantasy',
+  'Mystery',
+  'Thriller',
+  'Romance',
+  'Horror',
+  'Adventure',
+  'Young Adult',
+  'Children',
+  'Graphic Novel',
+]);
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function matchesGenreToken(input: string, candidate: string): boolean {
+  return new RegExp(`(^|[^a-z])${escapeRegExp(candidate)}([^a-z]|$)`, 'i').test(input);
+}
+
+function extractGenresFromLabel(input: string): string[] {
+  const directMatch = GENRE_ALIASES[input] ?? GENRE_LOOKUP.get(input);
+  if (directMatch) {
+    return [directMatch];
+  }
+
+  const matches = new Set<string>();
+
+  for (const [alias, genre] of SORTED_GENRE_ALIASES) {
+    if (matchesGenreToken(input, alias)) {
+      matches.add(genre);
+    }
+  }
+
+  for (const [canonicalLower, canonicalGenre] of Array.from(GENRE_LOOKUP.entries())) {
+    if (matchesGenreToken(input, canonicalLower)) {
+      matches.add(canonicalGenre);
+    }
+  }
+
+  if (matches.size > 1 && Array.from(matches).some((genre) => SPECIFIC_FICTION_GENRES.has(genre))) {
+    matches.delete('Fiction');
+  }
+
+  return Array.from(matches);
+}
+
 export function normalizeGenres(
-  input: string[] | string | null | undefined
+  input: string[] | string | null | undefined,
+  options: {
+    fallback?: string[] | string | null;
+    maxGenres?: number;
+  } = {}
 ): string[] {
-  const rawGenres = Array.isArray(input)
+  const primaryGenres = Array.isArray(input)
     ? input
     : typeof input === 'string'
       ? input.split(',')
       : [];
 
-  const normalized = rawGenres
+  const fallbackGenres = Array.isArray(options.fallback)
+    ? options.fallback
+    : typeof options.fallback === 'string'
+      ? [options.fallback]
+      : [];
+
+  const normalized = primaryGenres
     .map((genre) => genre.trim())
     .filter(Boolean)
-    .map((genre) => {
-      const lower = genre.toLowerCase();
-      return GENRE_ALIASES[lower] ?? GENRE_LOOKUP.get(lower) ?? genre;
-    });
+    .flatMap((genre) => extractGenresFromLabel(genre.toLowerCase()));
 
-  return normalized.length > 0 ? Array.from(new Set(normalized)) : ['Fiction'];
+  const fallbackNormalized = fallbackGenres
+    .map((genre) => genre.trim())
+    .filter(Boolean)
+    .flatMap((genre) => extractGenresFromLabel(genre.toLowerCase()));
+
+  const deduped = Array.from(
+    new Set(
+      normalized.length > 0 ? normalized : fallbackNormalized
+    )
+  ).slice(0, options.maxGenres ?? MAX_BOOK_GENRES);
+
+  return deduped.length > 0 ? deduped : ['Fiction'];
 }
 
 export function getPrimaryGenre(

@@ -47,12 +47,21 @@ BEGIN
   SELECT *
   FROM books
   WHERE
-    to_tsvector('english', title || ' ' || author || ' ' || COALESCE(description, ''))
-    @@ plainto_tsquery('english', search_query)
+    (
+      setweight(to_tsvector('english', COALESCE(title, '')), 'A') ||
+      setweight(to_tsvector('english', COALESCE(author, '')), 'A') ||
+      setweight(to_tsvector('english', array_to_string(COALESCE(genre, ARRAY[]::TEXT[]), ' ')), 'B') ||
+      setweight(to_tsvector('english', COALESCE(description, '')), 'C')
+    ) @@ websearch_to_tsquery('english', search_query)
   ORDER BY
     ts_rank(
-      to_tsvector('english', title || ' ' || author || ' ' || COALESCE(description, '')),
-      plainto_tsquery('english', search_query)
+      (
+        setweight(to_tsvector('english', COALESCE(title, '')), 'A') ||
+        setweight(to_tsvector('english', COALESCE(author, '')), 'A') ||
+        setweight(to_tsvector('english', array_to_string(COALESCE(genre, ARRAY[]::TEXT[]), ' ')), 'B') ||
+        setweight(to_tsvector('english', COALESCE(description, '')), 'C')
+      ),
+      websearch_to_tsquery('english', search_query)
     ) DESC;
 END;
 $$ LANGUAGE plpgsql;

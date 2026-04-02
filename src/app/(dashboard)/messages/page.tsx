@@ -1,17 +1,20 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { MessageSquare } from 'lucide-react';
+import { MessageSquare, Plus } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useChat } from '@/hooks/useChat';
 import { ConversationList } from '@/components/chat/conversation-list';
+import { NewChatModal } from '@/components/chat/new-chat-modal';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 
 export default function MessagesPage() {
   const { user } = useAuth();
   const router = useRouter();
   const chat = useChat(user?.id);
+  const [newChatOpen, setNewChatOpen] = useState(false);
 
   useEffect(() => {
     if (user?.id) {
@@ -27,8 +30,16 @@ export default function MessagesPage() {
   return (
     <div className="flex h-[calc(100vh-theme(spacing.16))] flex-col">
       {/* Header */}
-      <div className="border-b px-6 py-4">
+      <div className="flex items-center justify-between border-b px-6 py-4">
         <h1 className="text-2xl font-bold tracking-tight">Messages</h1>
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={() => setNewChatOpen(true)}
+        >
+          <Plus className="h-4 w-4" />
+          New Chat
+        </Button>
       </div>
 
       <div className="flex flex-1 overflow-hidden">
@@ -81,6 +92,12 @@ export default function MessagesPage() {
           </div>
         </div>
       </div>
+
+      <NewChatModal
+        open={newChatOpen}
+        onClose={() => setNewChatOpen(false)}
+        onSelectUser={handleSelectConversation}
+      />
     </div>
   );
 }

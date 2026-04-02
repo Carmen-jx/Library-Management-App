@@ -16,6 +16,7 @@ interface UserCardProps {
   onConnect?: (userId: string) => void;
   onAccept?: (userId: string) => void;
   onReject?: (userId: string) => void;
+  onCancel?: (userId: string) => void;
   loading?: boolean;
 }
 
@@ -27,6 +28,7 @@ function ConnectionButton({
   onConnect,
   onAccept,
   onReject,
+  onCancel,
   loading,
 }: {
   userId: string;
@@ -34,6 +36,7 @@ function ConnectionButton({
   onConnect?: (userId: string) => void;
   onAccept?: (userId: string) => void;
   onReject?: (userId: string) => void;
+  onCancel?: (userId: string) => void;
   loading?: boolean;
 }) {
   if (status === 'accepted') {
@@ -67,6 +70,20 @@ function ConnectionButton({
           Reject
         </Button>
       </div>
+    );
+  }
+
+  if (status === 'pending' && onCancel) {
+    return (
+      <Button
+        variant="secondary"
+        size="sm"
+        loading={loading}
+        onClick={() => onCancel(userId)}
+      >
+        <X className="h-4 w-4" />
+        Cancel Request
+      </Button>
     );
   }
 
@@ -105,6 +122,7 @@ export function UserCard({
   onConnect,
   onAccept,
   onReject,
+  onCancel,
   loading,
 }: UserCardProps) {
   return (
@@ -160,6 +178,7 @@ export function UserCard({
             onConnect={onConnect}
             onAccept={onAccept}
             onReject={onReject}
+            onCancel={onCancel}
             loading={loading}
           />
         </div>

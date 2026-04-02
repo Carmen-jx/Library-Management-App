@@ -593,7 +593,7 @@ export default function DashboardPage() {
           <div>
             <h3 className="flex items-center gap-2 text-base font-semibold text-gray-900">
               <Sparkles className="h-4 w-4 text-indigo-600" />
-              Recommended For You
+              Recommended For You (auto refreshes every 3 days)
             </h3>
           </div>
           {recommendationsRefreshedAt && (

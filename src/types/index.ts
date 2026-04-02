@@ -92,9 +92,22 @@ export interface Ticket {
   status: TicketStatus;
   priority: TicketPriority;
   admin_response: string | null;
+  assigned_to: string | null;
   created_at: string;
   updated_at: string;
   profile?: Profile;
+  assigned_admin?: Profile;
+  messages?: TicketMessage[];
+}
+
+export interface TicketMessage {
+  id: string;
+  ticket_id: string;
+  sender_id: string;
+  sender_role: UserRole;
+  message: string;
+  created_at: string;
+  sender?: Profile;
 }
 
 export interface ActivityLog {
@@ -153,8 +166,10 @@ export interface NLSearchResult {
   structured_params: {
     title?: string;
     author?: string;
+    genres?: string[];
     genre?: string;
     keywords?: string[];
+    concepts?: string[];
   };
   results: OpenLibraryWork[];
   ranked_results?: Array<{
@@ -169,7 +184,8 @@ export type NotificationType =
   | 'connection_request'
   | 'connection_accepted'
   | 'ticket_created'
-  | 'ticket_updated';
+  | 'ticket_updated'
+  | 'ticket_assigned';
 
 export interface Notification {
   id: string;

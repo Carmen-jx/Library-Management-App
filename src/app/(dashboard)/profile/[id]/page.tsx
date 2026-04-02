@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Image from 'next/image';
-import { Users, CalendarDays, Shield, ArrowLeft, UserPlus, UserCheck, Clock, BookOpen, ArrowRight } from 'lucide-react';
+import { Users, CalendarDays, Shield, ArrowLeft, UserPlus, UserCheck, BookOpen, ArrowRight, X } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -17,6 +17,7 @@ import {
   getConnectionStatus,
   sendConnectionRequest,
   acceptConnection,
+  removeConnection,
 } from '@/services/connections';
 import { getUserBorrows } from '@/services/borrows';
 import { logActivity } from '@/services/activity';
@@ -48,7 +49,7 @@ function ProfileSkeleton() {
 export default function UserProfilePage() {
   const params = useParams();
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, profile: myProfile } = useAuth();
   const userId = params.id as string;
 
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -133,7 +134,7 @@ export default function UserProfilePage() {
         userId,
         'connection_request',
         'New Connection Request',
-        `${profile?.name ? profile.name + ' wants' : 'Someone wants'} to connect with you.`,
+        `${myProfile?.name ?? 'Someone'} wants to connect with you.`,
         `/profile/${user.id}`
       );
       setConnection(conn);
@@ -157,7 +158,7 @@ export default function UserProfilePage() {
         connection.requester_id,
         'connection_accepted',
         'Connection Accepted',
-        `${profile?.name ?? 'Someone'} accepted your connection request.`,
+        `${myProfile?.name ?? 'Someone'} accepted your connection request.`,
         `/profile/${user.id}`
       );
       setConnection(updated);
@@ -165,6 +166,21 @@ export default function UserProfilePage() {
       toast.success('Connection accepted!');
     } catch {
       toast.error('Failed to accept connection. Please try again.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleCancelRequest = async () => {
+    if (!user || !connection) return;
+
+    setActionLoading(true);
+    try {
+      await removeConnection(connection.id);
+      setConnection(null);
+      toast.success('Connection request cancelled.');
+    } catch {
+      toast.error('Failed to cancel request. Please try again.');
     } finally {
       setActionLoading(false);
     }
@@ -240,9 +256,14 @@ export default function UserProfilePage() {
               </Button>
             )}
             {isOwnOutgoing && (
-              <Button variant="secondary" size="sm" disabled>
-                <Clock className="h-4 w-4" />
-                Pending
+              <Button
+                variant="secondary"
+                size="sm"
+                loading={actionLoading}
+                onClick={handleCancelRequest}
+              >
+                <X className="h-4 w-4" />
+                Cancel Request
               </Button>
             )}
             {isIncomingPending && (

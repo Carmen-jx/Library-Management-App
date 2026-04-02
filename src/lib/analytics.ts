@@ -26,15 +26,6 @@ export interface AnalyticsData {
     topSearches: { query: string; count: number }[];
     searchBorrowConversion: number;
   };
-  ai: {
-    aiSearchCount: number;
-    normalSearchCount: number;
-    aiRecommendationCount: number;
-    aiClickCount: number;
-    aiUsageRate: number;
-    clickThroughRate: number;
-    aiVsNormalRatio: number;
-  };
   social: {
     messagesSent7d: number;
     newConnections7d: number;
@@ -83,17 +74,12 @@ export async function fetchAnalyticsData(): Promise<AnalyticsData> {
     searchLogsResult,
     searchUsersResult,
     borrowAfterSearchResult,
-    // AI
-    aiSearchResult,
-    normalSearchResult,
-    aiRecommendationResult,
-    aiClickResult,
     // Social
     messagesResult,
     connectionsResult,
     // Charts (RPC)
     borrowsOverTimeResult,
-    popularGenresResult,
+    popularGenresBorrowsResult,
     popularBooksResult,
   ] = await Promise.all([
     // Total users
@@ -187,34 +173,6 @@ export async function fetchAnalyticsData(): Promise<AnalyticsData> {
       .select('user_id, borrowed_at')
       .gte('borrowed_at', sevenDaysAgo),
 
-    // AI search count (last 30 days)
-    supabase
-      .from('activity_logs')
-      .select('*', { count: 'exact', head: true })
-      .eq('action', 'ai_search')
-      .gte('created_at', daysAgo(30)),
-
-    // Normal search count (last 30 days)
-    supabase
-      .from('activity_logs')
-      .select('*', { count: 'exact', head: true })
-      .eq('action', 'search')
-      .gte('created_at', daysAgo(30)),
-
-    // AI recommendation count (last 30 days)
-    supabase
-      .from('activity_logs')
-      .select('*', { count: 'exact', head: true })
-      .eq('action', 'ai_recommendation')
-      .gte('created_at', daysAgo(30)),
-
-    // AI click count (last 30 days)
-    supabase
-      .from('activity_logs')
-      .select('*', { count: 'exact', head: true })
-      .eq('action', 'ai_recommendation_click')
-      .gte('created_at', daysAgo(30)),
-
     // Messages sent (last 7 days)
     supabase
       .from('messages')
@@ -230,7 +188,9 @@ export async function fetchAnalyticsData(): Promise<AnalyticsData> {
 
     // Chart RPCs
     supabase.rpc('get_borrows_over_time'),
-    supabase.rpc('get_popular_genres'),
+    supabase
+      .from('borrows')
+      .select('books!inner(genre)'),
     supabase.rpc('get_popular_books', { limit_count: 10 }),
   ]);
 
@@ -283,7 +243,7 @@ export async function fetchAnalyticsData(): Promise<AnalyticsData> {
   const totalBooks = totalBooksResult.count ?? 0;
   const availableBooks = availableBooksResult.count ?? 0;
   const availabilityRate = totalBooks > 0
-    ? Math.round((availableBooks / totalBooks) * 100)
+    ? Math.round((availableBooks / totalBooks) * 1000) / 10
     : 0;
   const overdueCount = overdueResult.count ?? 0;
 
@@ -314,30 +274,26 @@ export async function fetchAnalyticsData(): Promise<AnalyticsData> {
     ? Math.round((convertedUsers / searchUserIdSet.size) * 100)
     : 0;
 
-  // AI metrics
-  const aiSearchCount = aiSearchResult.count ?? 0;
-  const normalSearchCount = normalSearchResult.count ?? 0;
-  const aiRecommendationCount = aiRecommendationResult.count ?? 0;
-  const aiClickCount = aiClickResult.count ?? 0;
-  const totalAiActions = aiSearchCount + aiRecommendationCount;
-  const aiUsageRate = totalUsers > 0
-    ? Math.round((totalAiActions / totalUsers) * 100)
-    : 0;
-  const clickThroughRate = aiRecommendationCount > 0
-    ? Math.round((aiClickCount / aiRecommendationCount) * 100)
-    : 0;
-  const totalSearches = aiSearchCount + normalSearchCount;
-  const aiVsNormalRatio = totalSearches > 0
-    ? Math.round((aiSearchCount / totalSearches) * 100)
-    : 0;
-
   // Social
   const messagesSent7d = messagesResult.count ?? 0;
   const newConnections7d = connectionsResult.count ?? 0;
 
   // Charts
   const borrowsOverTime = (borrowsOverTimeResult.data as { date: string; count: number }[] | null) ?? [];
-  const popularGenres = (popularGenresResult.data as { genre: string; count: number }[] | null) ?? [];
+  const borrowedGenresRows = (
+    popularGenresBorrowsResult.data as { books: { genre: string[] | null } | null }[] | null
+  ) ?? [];
+  const genreCountMap = new Map<string, number>();
+  for (const row of borrowedGenresRows) {
+    const genres = row.books?.genre;
+    const normalizedGenres = genres && genres.length > 0 ? genres : ['Fiction'];
+    for (const genre of normalizedGenres) {
+      genreCountMap.set(genre, (genreCountMap.get(genre) ?? 0) + 1);
+    }
+  }
+  const popularGenres = Array.from(genreCountMap.entries())
+    .map(([genre, count]) => ({ genre, count }))
+    .sort((a, b) => b.count - a.count);
   const popularBooks = (popularBooksResult.data as { title: string; borrow_count: number }[] | null) ?? [];
 
   return {
@@ -363,15 +319,6 @@ export async function fetchAnalyticsData(): Promise<AnalyticsData> {
     behavior: {
       topSearches,
       searchBorrowConversion,
-    },
-    ai: {
-      aiSearchCount,
-      normalSearchCount,
-      aiRecommendationCount,
-      aiClickCount,
-      aiUsageRate,
-      clickThroughRate,
-      aiVsNormalRatio,
     },
     social: {
       messagesSent7d,

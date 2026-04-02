@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import {
@@ -59,6 +59,7 @@ function AdminBooksSkeleton() {
 
 export default function AdminBooksPage() {
   const [books, setBooks] = useState<Book[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
   // Delete confirmation
@@ -78,25 +79,43 @@ export default function AdminBooksPage() {
   const [searching, setSearching] = useState(false);
   const [importingId, setImportingId] = useState<string | null>(null);
 
-  // Fetch library books
+  // Fetch library books (server-side pagination + filtering)
   useEffect(() => {
     const fetchBooks = async () => {
+      setLoading(true);
       const supabase = createClient();
-      const { data, error } = await supabase
+      const from = (currentPage - 1) * PAGE_SIZE;
+      const to = from + PAGE_SIZE - 1;
+
+      let query = supabase
         .from('books')
-        .select('*')
-        .order('created_at', { ascending: false });
+        .select('*', { count: 'exact' })
+        .order('created_at', { ascending: false })
+        .range(from, to);
+
+      if (libraryFilter.trim()) {
+        query = query.or(
+          `title.ilike.%${libraryFilter}%,author.ilike.%${libraryFilter}%`
+        );
+      }
+
+      if (genreFilter) {
+        query = query.contains('genre', [genreFilter]);
+      }
+
+      const { data, count, error } = await query;
 
       if (error) {
         toast.error('Failed to load books.');
       } else {
-        setBooks(data as Book[]);
+        setBooks((data as Book[]) ?? []);
+        setTotalCount(count ?? 0);
       }
       setLoading(false);
     };
 
     fetchBooks();
-  }, []);
+  }, [currentPage, libraryFilter, genreFilter]);
 
   // --- Edit Handlers ---
 
@@ -141,7 +160,7 @@ export default function AdminBooksPage() {
       const res = await fetch(
         `https://openlibrary.org/search.json?q=${encodeURIComponent(
           searchQuery
-        )}&limit=10`
+        )}&limit=20`
       );
       const data: OpenLibrarySearchResponse = await res.json();
       setSearchResults(data.docs || []);
@@ -158,7 +177,6 @@ export default function AdminBooksPage() {
 
   const handleImport = async (work: OpenLibraryWork) => {
     setImportingId(work.key);
-    const supabase = createClient();
 
     const newBook = {
       open_library_key: work.key,
@@ -179,50 +197,32 @@ export default function AdminBooksPage() {
       },
     };
 
-    const { data, error } = await supabase
-      .from('books')
-      .upsert(newBook, { onConflict: 'open_library_key' })
-      .select()
-      .single();
+    try {
+      const response = await fetch('/api/admin/books/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newBook),
+      });
 
-    if (error) {
-      if (error.code === '23505') {
-        toast.warning('This book has already been imported.');
-      } else {
-        toast.error('Failed to import book.');
+      if (!response.ok) {
+        throw new Error('Failed to import book.');
       }
-    } else {
-      setBooks((prev) => [data as Book, ...prev]);
+
+      const { book } = await response.json();
+      setBooks((prev) => {
+        const remaining = prev.filter((existingBook) => existingBook.id !== book.id);
+        return [book as Book, ...remaining];
+      });
       toast.success(`Imported "${work.title}" successfully.`);
+    } catch {
+      toast.error('Failed to import book.');
     }
 
     setImportingId(null);
   };
 
-  // Filtered and paginated books
-  const filteredBooks = useMemo(() => {
-    return books.filter((book) => {
-      if (libraryFilter.trim()) {
-        const q = libraryFilter.toLowerCase();
-        if (
-          !book.title.toLowerCase().includes(q) &&
-          !book.author.toLowerCase().includes(q)
-        ) {
-          return false;
-        }
-      }
-      if (genreFilter && !book.genre.includes(genreFilter)) {
-        return false;
-      }
-      return true;
-    });
-  }, [books, libraryFilter, genreFilter]);
-
-  const totalPages = Math.max(1, Math.ceil(filteredBooks.length / PAGE_SIZE));
-  const paginatedBooks = filteredBooks.slice(
-    (currentPage - 1) * PAGE_SIZE,
-    currentPage * PAGE_SIZE
-  );
+  // Pagination (server-side)
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   // Reset to page 1 when filters change
   useEffect(() => {
@@ -239,7 +239,7 @@ export default function AdminBooksPage() {
       <div>
         <h2 className="text-2xl font-bold text-gray-900">Manage Books</h2>
         <p className="mt-1 text-gray-500">
-          {books.length} books in the library. Edit, delete, or import new books.
+          {totalCount} books in the library. Edit, delete, or import new books.
         </p>
       </div>
 
@@ -317,7 +317,7 @@ export default function AdminBooksPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 bg-white">
-                {paginatedBooks.map((book) => (
+                {books.map((book) => (
                   <tr key={book.id} className="hover:bg-gray-50">
                     <td className="px-4 py-2">
                       <Link
@@ -386,7 +386,7 @@ export default function AdminBooksPage() {
             {/* Pagination Footer */}
             <div className="flex items-center justify-between border-t border-gray-200 px-4 py-3">
               <p className="text-xs text-gray-500">
-                Showing {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, filteredBooks.length)} of {filteredBooks.length} books
+                Showing {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, totalCount)} of {totalCount} books
               </p>
               {totalPages > 1 && (
                 <div className="flex items-center gap-1">

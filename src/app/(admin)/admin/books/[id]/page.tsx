@@ -110,7 +110,6 @@ export default function AdminBookEditorPage() {
     if (!book) return;
 
     setSaving(true);
-    const supabase = createClient();
     const payload = {
       title: form.title.trim(),
       author: form.author.trim(),
@@ -120,20 +119,19 @@ export default function AdminBookEditorPage() {
       available: form.available,
     };
 
-    const { data, error } = await supabase
-      .from('books')
-      .update(payload)
-      .eq('id', book.id)
-      .select()
-      .single();
+    const response = await fetch(`/api/admin/books/${book.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
 
-    if (error) {
+    if (!response.ok) {
       toast.error('Failed to save book changes.');
       setSaving(false);
       return;
     }
 
-    const updatedBook = data as Book;
+    const { book: updatedBook } = await response.json();
     setBook(updatedBook);
     setForm({
       title: updatedBook.title,
@@ -152,13 +150,11 @@ export default function AdminBookEditorPage() {
     if (!book) return;
 
     setDeleting(true);
-    const supabase = createClient();
-    const { error } = await supabase
-      .from('books')
-      .delete()
-      .eq('id', book.id);
+    const response = await fetch(`/api/admin/books/${book.id}`, {
+      method: 'DELETE',
+    });
 
-    if (error) {
+    if (!response.ok) {
       toast.error('Failed to delete book.');
       setDeleting(false);
       return;

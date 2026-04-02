@@ -15,6 +15,8 @@
  */
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { buildBookEmbeddingText, generateEmbeddingsBatch } from '../src/lib/embeddings';
+import { normalizeGenres } from '../src/lib/utils';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -70,6 +72,7 @@ interface BookRecord {
   cover_url: string | null;
   metadata: Record<string, unknown>;
   available: boolean;
+  embedding?: string;
 }
 
 interface ImportStats {
@@ -107,165 +110,6 @@ const QUERY_SUBJECTS = [
   'literary_fiction',
 ] as const;
 
-// Matches the GENRES constant in src/lib/utils.ts exactly
-const NORMALIZED_GENRES = [
-  'Fiction',
-  'Non-Fiction',
-  'Science Fiction',
-  'Fantasy',
-  'Mystery',
-  'Thriller',
-  'Romance',
-  'Horror',
-  'Biography',
-  'History',
-  'Science',
-  'Technology',
-  'Self-Help',
-  'Poetry',
-  'Drama',
-  'Comedy',
-  'Adventure',
-  'Children',
-  'Young Adult',
-  'Graphic Novel',
-] as const;
-
-type NormalizedGenre = (typeof NORMALIZED_GENRES)[number];
-
-// Map Open Library subject strings to a normalized genre
-const GENRE_MAP: Record<string, NormalizedGenre> = {
-  // Fiction
-  fiction: 'Fiction',
-  literary_fiction: 'Fiction',
-  'literary fiction': 'Fiction',
-  literature: 'Fiction',
-  novels: 'Fiction',
-  // Non-Fiction
-  'non-fiction': 'Non-Fiction',
-  nonfiction: 'Non-Fiction',
-  business: 'Non-Fiction',
-  economics: 'Non-Fiction',
-  politics: 'Non-Fiction',
-  education: 'Non-Fiction',
-  philosophy: 'Non-Fiction',
-  ethics: 'Non-Fiction',
-  religion: 'Non-Fiction',
-  spirituality: 'Non-Fiction',
-  // Science Fiction
-  science_fiction: 'Science Fiction',
-  'science fiction': 'Science Fiction',
-  sci_fi: 'Science Fiction',
-  'sci-fi': 'Science Fiction',
-  scifi: 'Science Fiction',
-  dystopia: 'Science Fiction',
-  dystopian: 'Science Fiction',
-  cyberpunk: 'Science Fiction',
-  'space opera': 'Science Fiction',
-  // Fantasy
-  fantasy: 'Fantasy',
-  'epic fantasy': 'Fantasy',
-  'urban fantasy': 'Fantasy',
-  'dark fantasy': 'Fantasy',
-  'high fantasy': 'Fantasy',
-  magic: 'Fantasy',
-  // Mystery
-  mystery: 'Mystery',
-  detective: 'Mystery',
-  'crime fiction': 'Mystery',
-  crime: 'Mystery',
-  whodunit: 'Mystery',
-  'true crime': 'Mystery',
-  true_crime: 'Mystery',
-  // Thriller
-  thriller: 'Thriller',
-  suspense: 'Thriller',
-  'psychological thriller': 'Thriller',
-  espionage: 'Thriller',
-  spy: 'Thriller',
-  // Romance
-  romance: 'Romance',
-  'romance fiction': 'Romance',
-  'love stories': 'Romance',
-  'love story': 'Romance',
-  // Horror
-  horror: 'Horror',
-  gothic: 'Horror',
-  'gothic fiction': 'Horror',
-  supernatural: 'Horror',
-  // Biography
-  biography: 'Biography',
-  autobiography: 'Biography',
-  memoir: 'Biography',
-  memoirs: 'Biography',
-  // History
-  history: 'History',
-  'world history': 'History',
-  'military history': 'History',
-  'ancient history': 'History',
-  // Science
-  science: 'Science',
-  physics: 'Science',
-  biology: 'Science',
-  chemistry: 'Science',
-  mathematics: 'Science',
-  astronomy: 'Science',
-  'natural history': 'Science',
-  // Technology
-  technology: 'Technology',
-  computers: 'Technology',
-  programming: 'Technology',
-  engineering: 'Technology',
-  'computer science': 'Technology',
-  software: 'Technology',
-  // Self-Help
-  self_help: 'Self-Help',
-  'self-help': 'Self-Help',
-  'self help': 'Self-Help',
-  'personal development': 'Self-Help',
-  psychology: 'Self-Help',
-  motivation: 'Self-Help',
-  // Poetry
-  poetry: 'Poetry',
-  poems: 'Poetry',
-  verse: 'Poetry',
-  // Drama
-  drama: 'Drama',
-  plays: 'Drama',
-  theater: 'Drama',
-  theatre: 'Drama',
-  tragedy: 'Drama',
-  // Comedy
-  comedy: 'Comedy',
-  humor: 'Comedy',
-  humour: 'Comedy',
-  satire: 'Comedy',
-  // Adventure
-  adventure: 'Adventure',
-  'adventure fiction': 'Adventure',
-  action: 'Adventure',
-  travel: 'Adventure',
-  // Children
-  children: 'Children',
-  "children's literature": 'Children',
-  "children's fiction": 'Children',
-  'picture books': 'Children',
-  juvenile: 'Children',
-  // Young Adult
-  young_adult: 'Young Adult',
-  'young adult': 'Young Adult',
-  'young adult fiction': 'Young Adult',
-  ya: 'Young Adult',
-  teen: 'Young Adult',
-  // Graphic Novel
-  graphic_novels: 'Graphic Novel',
-  'graphic novels': 'Graphic Novel',
-  'graphic novel': 'Graphic Novel',
-  comics: 'Graphic Novel',
-  manga: 'Graphic Novel',
-  'comic books': 'Graphic Novel',
-};
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -274,25 +118,12 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Maps the query subject to a normalized genre (used as default for that batch). */
-function subjectToGenre(subject: string): NormalizedGenre {
-  return GENRE_MAP[subject.toLowerCase().trim()] ?? 'Fiction';
-}
-
 /** Picks normalized genres from Open Library subjects. */
 function mapGenres(
   subjects: string[] | undefined,
   fallbackSubject: string
-): NormalizedGenre[] {
-  const mapped = (subjects ?? [])
-    .map((subject) => GENRE_MAP[subject.toLowerCase().trim()])
-    .filter((genre): genre is NormalizedGenre => Boolean(genre));
-
-  const deduped = Array.from(
-    new Set([...mapped, subjectToGenre(fallbackSubject)])
-  );
-
-  return deduped.length > 0 ? deduped.slice(0, 3) : ['Fiction'];
+): string[] {
+  return normalizeGenres(subjects, { fallback: fallbackSubject, maxGenres: 6 });
 }
 
 /** Build a cover URL from Open Library data. */
@@ -395,9 +226,26 @@ async function fetchBooks(
 async function insertBatch(
   batch: BookRecord[]
 ): Promise<{ inserted: number; errors: number }> {
+  let payload = batch;
+
+  try {
+    const embeddings = await generateEmbeddingsBatch(
+      batch.map((book) => buildBookEmbeddingText(book))
+    );
+
+    payload = batch.map((book, index) => ({
+      ...book,
+      embedding: JSON.stringify(embeddings[index]),
+    }));
+  } catch (error) {
+    console.error(
+      `  Batch embedding error: ${error instanceof Error ? error.message : error}`
+    );
+  }
+
   const { data, error } = await supabase
     .from('books')
-    .upsert(batch, { onConflict: 'open_library_key', ignoreDuplicates: false })
+    .upsert(payload, { onConflict: 'open_library_key', ignoreDuplicates: false })
     .select('id');
 
   if (error) {

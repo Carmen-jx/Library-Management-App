@@ -9,6 +9,7 @@ import {
   sendConnectionRequest,
   acceptConnection,
   rejectConnection,
+  removeConnection,
   getConnectionStatus,
 } from '@/services/connections';
 import { logActivity } from '@/services/activity';
@@ -48,9 +49,13 @@ export default function DiscoverPage() {
       const usersWithStatus = await Promise.all(
         (profiles ?? []).map(async (profile: Profile) => {
           const connection = await getConnectionStatus(user.id, profile.id);
+          let status: UserWithStatus['connectionStatus'] = connection?.status ?? null;
+          if (status === 'pending' && connection?.requester_id === user.id) {
+            status = 'pending_outgoing';
+          }
           return {
             profile,
-            connectionStatus: connection?.status ?? null,
+            connectionStatus: status,
             connectionId: connection?.id,
             actionLoading: false,
           };
@@ -164,6 +169,25 @@ export default function DiscoverPage() {
     }
   };
 
+  const handleCancel = async (targetUserId: string) => {
+    if (!user) return;
+
+    const targetUser = users.find((u) => u.profile.id === targetUserId);
+    if (!targetUser?.connectionId) return;
+
+    setUserActionLoading(targetUserId, true);
+    try {
+      await removeConnection(targetUser.connectionId);
+      updateUserStatus(targetUserId, 'none');
+      toast.success('Connection request cancelled.');
+    } catch (err) {
+      console.error('Failed to cancel connection request:', err);
+      toast.error('Failed to cancel request. Please try again.');
+    } finally {
+      setUserActionLoading(targetUserId, false);
+    }
+  };
+
   const filteredUsers = users.filter((u) =>
     search.trim() === ''
       ? true
@@ -222,8 +246,9 @@ export default function DiscoverPage() {
                 u.connectionStatus
               }
               onConnect={() => handleConnect(u.profile.id)}
-              onAccept={() => handleAccept(u.profile.id)}
-              onReject={() => handleReject(u.profile.id)}
+              onAccept={u.connectionStatus === 'pending' ? () => handleAccept(u.profile.id) : undefined}
+              onReject={u.connectionStatus === 'pending' ? () => handleReject(u.profile.id) : undefined}
+              onCancel={u.connectionStatus === 'pending_outgoing' ? () => handleCancel(u.profile.id) : undefined}
               loading={u.actionLoading}
             />
           ))}

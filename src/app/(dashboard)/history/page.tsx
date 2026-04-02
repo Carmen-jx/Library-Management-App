@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { BookOpen, RotateCcw, Clock, BookX } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -183,45 +184,49 @@ export default function HistoryPage() {
           {filteredBorrows.map((borrow) => (
             <Card key={borrow.id} padding="md">
               <div className="flex items-center gap-4">
-                {/* Book Cover */}
-                <div className="flex h-20 w-14 shrink-0 items-center justify-center overflow-hidden rounded bg-gray-100">
-                  {borrow.book?.cover_url ? (
-                    /* eslint-disable-next-line @next/next/no-img-element */
-                    <img
-                      src={borrow.book.cover_url}
-                      alt={borrow.book.title}
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <BookOpen className="h-6 w-6 text-gray-300" />
-                  )}
-                </div>
-
-                {/* Book Info */}
-                <div className="min-w-0 flex-1">
-                  <h3 className="truncate text-sm font-semibold text-gray-900">
-                    {borrow.book?.title ?? 'Unknown Book'}
-                  </h3>
-                  <p className="truncate text-xs text-gray-500">
-                    {borrow.book?.author ?? 'Unknown Author'}
-                  </p>
-                  <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
-                    <span className="flex items-center gap-1">
-                      <BookOpen className="h-3 w-3" />
-                      Borrowed {formatDate(borrow.borrowed_at)}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Clock className="h-3 w-3" />
-                      Due {formatDate(borrow.due_date)}
-                    </span>
-                    {borrow.returned_at && (
-                      <span className="flex items-center gap-1">
-                        <RotateCcw className="h-3 w-3" />
-                        Returned {formatDate(borrow.returned_at)}
-                      </span>
+                {/* Book Cover & Info (clickable) */}
+                <Link
+                  href={`/books/${borrow.book_id}`}
+                  className="flex min-w-0 flex-1 items-center gap-4 hover:opacity-80"
+                >
+                  <div className="flex h-20 w-14 shrink-0 items-center justify-center overflow-hidden rounded bg-gray-100">
+                    {borrow.book?.cover_url ? (
+                      /* eslint-disable-next-line @next/next/no-img-element */
+                      <img
+                        src={borrow.book.cover_url}
+                        alt={borrow.book.title}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <BookOpen className="h-6 w-6 text-gray-300" />
                     )}
                   </div>
-                </div>
+
+                  <div className="min-w-0 flex-1">
+                    <h3 className="truncate text-sm font-semibold text-gray-900">
+                      {borrow.book?.title ?? 'Unknown Book'}
+                    </h3>
+                    <p className="truncate text-xs text-gray-500">
+                      {borrow.book?.author ?? 'Unknown Author'}
+                    </p>
+                    <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
+                      <span className="flex items-center gap-1">
+                        <BookOpen className="h-3 w-3" />
+                        Borrowed {formatDate(borrow.borrowed_at)}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Clock className="h-3 w-3" />
+                        Due {formatDate(borrow.due_date)}
+                      </span>
+                      {borrow.returned_at && (
+                        <span className="flex items-center gap-1">
+                          <RotateCcw className="h-3 w-3" />
+                          Returned {formatDate(borrow.returned_at)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </Link>
 
                 {/* Status & Action */}
                 <div className="flex shrink-0 items-center gap-3">

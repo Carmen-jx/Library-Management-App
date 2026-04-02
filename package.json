@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "refresh:book-genres": "npx tsx --env-file .env scripts/refreshBookGenres.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.0",

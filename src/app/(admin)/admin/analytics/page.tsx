@@ -13,9 +13,6 @@ import {
   AlertTriangle,
   Search,
   ArrowRightLeft,
-  Sparkles,
-  MousePointerClick,
-  Brain,
   MessageCircle,
   Link2,
   RefreshCw,
@@ -31,7 +28,6 @@ import {
   TopBooksChart,
   MetricCard,
   SearchQueriesTable,
-  AISearchChart,
 } from '@/components/admin/charts';
 import { ActivityFeed } from '@/components/admin/activity-feed';
 import { getAllActivity } from '@/services/activity';
@@ -148,7 +144,7 @@ export default function AnalyticsPage() {
         <div>
           <h2 className="text-2xl font-bold text-gray-900">Analytics</h2>
           <p className="mt-1 text-gray-500">
-            Product metrics, engagement insights, and AI feature performance.
+            Product metrics and engagement insights.
           </p>
         </div>
         <button
@@ -193,13 +189,13 @@ export default function AnalyticsPage() {
         />
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
           <MetricCard
-            label="DAU"
+            label="Daily Active Users"
             value={data.engagement.dau}
             subtitle="Last 24 hours"
             icon={<Activity className="h-5 w-5" />}
           />
           <MetricCard
-            label="WAU"
+            label="Weekly Active Users"
             value={data.engagement.wau}
             subtitle="Last 7 days"
             icon={<TrendingUp className="h-5 w-5" />}
@@ -277,46 +273,7 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      {/* E. AI Insights (highlighted) */}
-      <div className="space-y-4">
-        <SectionHeader
-          title="AI Insights"
-          subtitle="AI-powered feature performance (last 30 days)"
-        />
-        <div className="rounded-xl border border-violet-200 bg-gradient-to-br from-violet-50 to-white p-6">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <MetricCard
-              label="AI Usage Rate"
-              value={`${data.ai.aiUsageRate}%`}
-              subtitle="(AI searches + recs) / total users"
-              icon={<Sparkles className="h-5 w-5" />}
-              accentColor="text-violet-700"
-            />
-            <MetricCard
-              label="Recommendation CTR"
-              value={`${data.ai.clickThroughRate}%`}
-              subtitle={`${data.ai.aiClickCount} clicks / ${data.ai.aiRecommendationCount} shown`}
-              icon={<MousePointerClick className="h-5 w-5" />}
-              accentColor="text-violet-700"
-            />
-            <MetricCard
-              label="AI Search Share"
-              value={`${data.ai.aiVsNormalRatio}%`}
-              subtitle={`${data.ai.aiSearchCount} AI / ${data.ai.aiSearchCount + data.ai.normalSearchCount} total`}
-              icon={<Brain className="h-5 w-5" />}
-              accentColor="text-violet-700"
-            />
-          </div>
-          <div className="mt-4">
-            <AISearchChart
-              aiCount={data.ai.aiSearchCount}
-              normalCount={data.ai.normalSearchCount}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* F. Social Section */}
+      {/* E. Social Section */}
       <div className="space-y-4">
         <SectionHeader
           title="Social"
@@ -338,7 +295,7 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      {/* G. Activity Feed */}
+      {/* F. Activity Feed */}
       <Card>
         <Card.Header>
           <h3 className="text-base font-semibold text-gray-900">Recent Activity</h3>

@@ -37,32 +37,55 @@ function BooksPageSkeleton() {
 export default function BooksPage() {
   const { user, loading: authLoading } = useAuth();
   const [books, setBooks] = useState<Book[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [filters, setFilters] = useState<{ genres?: string[]; available?: boolean }>({});
   const [page, setPage] = useState(0);
 
-  // Fetch books
+  // Fetch books (server-side pagination + filtering)
   useEffect(() => {
     const fetchBooks = async () => {
+      setLoading(true);
       const supabase = createClient();
-      const { data, error } = await supabase
+      const from = page * BOOKS_PER_PAGE;
+      const to = from + BOOKS_PER_PAGE - 1;
+
+      let query = supabase
         .from('books')
-        .select('*')
-        .order('created_at', { ascending: false });
+        .select('*', { count: 'exact' })
+        .order('created_at', { ascending: false })
+        .range(from, to);
+
+      if (searchQuery) {
+        query = query.or(
+          `title.ilike.%${searchQuery}%,author.ilike.%${searchQuery}%`
+        );
+      }
+
+      if (filters.genres && filters.genres.length > 0) {
+        query = query.overlaps('genre', filters.genres);
+      }
+
+      if (filters.available) {
+        query = query.eq('available', true);
+      }
+
+      const { data, count, error } = await query;
 
       if (error) {
         console.error('Error fetching books:', error.message);
         toast.error('Failed to load books.');
       } else {
-        setBooks(data as Book[]);
+        setBooks((data as Book[]) ?? []);
+        setTotalCount(count ?? 0);
       }
       setLoading(false);
     };
 
     fetchBooks();
-  }, []);
+  }, [page, searchQuery, filters]);
 
   // Fetch favorites
   useEffect(() => {
@@ -83,37 +106,8 @@ export default function BooksPage() {
     fetchFavorites();
   }, [user]);
 
-  // Filter books client-side
-  const filteredBooks = books.filter((book) => {
-    // Search query filter
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      const matchesTitle = book.title.toLowerCase().includes(q);
-      const matchesAuthor = book.author.toLowerCase().includes(q);
-      if (!matchesTitle && !matchesAuthor) return false;
-    }
-
-    // Genre filter
-    if (
-      filters.genres &&
-      filters.genres.length > 0 &&
-      !filters.genres.some((genre) => book.genre.includes(genre))
-    ) {
-      return false;
-    }
-
-    // Availability filter
-    if (filters.available && !book.available) return false;
-
-    return true;
-  });
-
-  // Pagination
-  const totalPages = Math.ceil(filteredBooks.length / BOOKS_PER_PAGE);
-  const paginatedBooks = filteredBooks.slice(
-    page * BOOKS_PER_PAGE,
-    (page + 1) * BOOKS_PER_PAGE
-  );
+  // Pagination (server-side)
+  const totalPages = Math.ceil(totalCount / BOOKS_PER_PAGE);
 
   // Reset page when filters change
   useEffect(() => {
@@ -174,7 +168,7 @@ export default function BooksPage() {
       <div>
         <h2 className="text-2xl font-bold text-gray-900">Browse Books</h2>
         <p className="mt-1 text-gray-500">
-          Explore our collection of {books.length} books.
+          Explore our collection of {totalCount} books.
         </p>
       </div>
 
@@ -186,7 +180,7 @@ export default function BooksPage() {
 
       {/* Book Grid */}
       <BookGrid
-        books={paginatedBooks}
+        books={books}
         showActions
         favorites={favorites}
         onFavoriteToggle={handleFavoriteToggle}
@@ -198,8 +192,8 @@ export default function BooksPage() {
         <div className="flex items-center justify-between border-t border-gray-200 pt-4">
           <p className="text-sm text-gray-500">
             Showing {page * BOOKS_PER_PAGE + 1}–
-            {Math.min((page + 1) * BOOKS_PER_PAGE, filteredBooks.length)} of{' '}
-            {filteredBooks.length} books
+            {Math.min((page + 1) * BOOKS_PER_PAGE, totalCount)} of{' '}
+            {totalCount} books
           </p>
           <div className="flex gap-2">
             <Button

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Pencil, Users, CalendarDays, Shield, BookOpen, ArrowRight } from 'lucide-react';
@@ -9,11 +9,14 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Avatar } from '@/components/ui/avatar';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Modal } from '@/components/ui/modal';
+import { Spinner } from '@/components/ui/spinner';
+import { toast } from '@/components/ui/toast';
 import { useAuth } from '@/hooks/useAuth';
-import { getConnectionCount } from '@/services/connections';
+import { getConnectionCount, getConnections, removeConnection } from '@/services/connections';
 import { getUserBorrows } from '@/services/borrows';
 import { formatDate, getPrimaryGenre } from '@/lib/utils';
-import type { Borrow } from '@/types';
+import type { Borrow, Connection, Profile as ProfileType } from '@/types';
 
 // --- Loading Skeleton ---
 
@@ -39,6 +42,12 @@ export default function ProfilePage() {
   const [connectionCount, setConnectionCount] = useState<number>(0);
   const [currentBorrows, setCurrentBorrows] = useState<Borrow[]>([]);
   const [pastBorrows, setPastBorrows] = useState<Borrow[]>([]);
+  const [connectionsModalOpen, setConnectionsModalOpen] = useState(false);
+  const [connectionsList, setConnectionsList] = useState<
+    { connectionId: string; user: ProfileType }[]
+  >([]);
+  const [connectionsLoading, setConnectionsLoading] = useState(false);
+  const [unfollowingId, setUnfollowingId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!profile) return;
@@ -56,6 +65,47 @@ export default function ProfilePage() {
         .catch(() => setPastBorrows([]));
     }
   }, [profile]);
+
+  const fetchConnectionsList = useCallback(async () => {
+    if (!profile) return;
+    setConnectionsLoading(true);
+    try {
+      const data = await getConnections(profile.id, 'accepted');
+      const list = data.map((conn: Connection) => ({
+        connectionId: conn.id,
+        user:
+          conn.requester_id === profile.id
+            ? (conn.receiver as ProfileType)
+            : (conn.requester as ProfileType),
+      }));
+      setConnectionsList(list);
+    } catch {
+      toast.error('Failed to load connections.');
+    } finally {
+      setConnectionsLoading(false);
+    }
+  }, [profile]);
+
+  const handleOpenConnectionsModal = () => {
+    setConnectionsModalOpen(true);
+    fetchConnectionsList();
+  };
+
+  const handleUnfollow = async (connectionId: string) => {
+    setUnfollowingId(connectionId);
+    try {
+      await removeConnection(connectionId);
+      setConnectionsList((prev) =>
+        prev.filter((c) => c.connectionId !== connectionId)
+      );
+      setConnectionCount((prev) => Math.max(0, prev - 1));
+      toast.success('Connection removed.');
+    } catch {
+      toast.error('Failed to remove connection.');
+    } finally {
+      setUnfollowingId(null);
+    }
+  };
 
   if (authLoading || !profile) {
     return <ProfileSkeleton />;
@@ -83,11 +133,15 @@ export default function ProfilePage() {
           </div>
 
           <div className="mt-2 flex items-center gap-4 text-sm text-gray-500">
-            <span className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={handleOpenConnectionsModal}
+              className="flex items-center gap-1 hover:text-indigo-600 transition-colors"
+            >
               <Users className="h-4 w-4" />
               <span className="font-medium text-gray-900">{connectionCount}</span>{' '}
               {connectionCount === 1 ? 'connection' : 'connections'}
-            </span>
+            </button>
             <span className="flex items-center gap-1">
               <CalendarDays className="h-4 w-4" />
               Member since {formatDate(profile.created_at)} ({Math.max(1, Math.floor((Date.now() - new Date(profile.created_at).getTime()) / 86400000))} days)
@@ -265,6 +319,58 @@ export default function ProfilePage() {
           )}
         </>
       )}
+
+      <Modal
+        open={connectionsModalOpen}
+        onClose={() => setConnectionsModalOpen(false)}
+        title="Connections"
+        size="sm"
+      >
+        <div className="max-h-80 space-y-1 overflow-y-auto">
+          {connectionsLoading && (
+            <div className="flex justify-center py-8">
+              <Spinner size="md" />
+            </div>
+          )}
+
+          {!connectionsLoading && connectionsList.length === 0 && (
+            <div className="flex flex-col items-center gap-2 py-8 text-center">
+              <Users className="h-8 w-8 text-gray-300" />
+              <p className="text-sm text-gray-500">No connections yet.</p>
+            </div>
+          )}
+
+          {!connectionsLoading &&
+            connectionsList.map(({ connectionId, user: connUser }) => (
+              <div
+                key={connectionId}
+                className="flex items-center justify-between rounded-lg px-3 py-2.5 hover:bg-gray-50"
+              >
+                <Link
+                  href={`/profile/${connUser.id}`}
+                  className="flex min-w-0 items-center gap-3"
+                >
+                  <Avatar
+                    src={connUser.avatar_url}
+                    name={connUser.name}
+                    size="sm"
+                  />
+                  <span className="truncate text-sm font-medium text-gray-900">
+                    {connUser.name}
+                  </span>
+                </Link>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  loading={unfollowingId === connectionId}
+                  onClick={() => handleUnfollow(connectionId)}
+                >
+                  Unfollow
+                </Button>
+              </div>
+            ))}
+        </div>
+      </Modal>
     </div>
   );
 }

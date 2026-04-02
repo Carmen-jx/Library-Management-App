@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { BookRecommendation, OpenLibraryWork } from '@/types';
 import { GENRES, normalizeGenres } from '@/lib/utils';
+import { buildQuerySignals, scoreOpenLibraryCandidate, tokenize } from '@/lib/search/ranking';
 
 let _deepseek: OpenAI | null = null;
 
@@ -25,6 +26,7 @@ interface StructuredSearchParams {
   searchQuery: string;
   title?: string;
   author?: string;
+  genres?: string[];
   genre?: string;
   keywords?: string[];
   concepts?: string[];
@@ -51,31 +53,37 @@ const COMPLEX_PHRASES = [
   'looking for',
 ];
 
-const STOP_WORDS = new Set([
-  'a',
-  'an',
-  'and',
-  'as',
-  'at',
-  'book',
-  'books',
-  'for',
-  'from',
-  'i',
-  'in',
-  'like',
-  'me',
-  'of',
-  'on',
-  'or',
-  'read',
-  'similar',
-  'something',
-  'that',
-  'the',
-  'to',
-  'with',
-]);
+const QUERY_GENRE_PATTERNS: Partial<Record<(typeof GENRES)[number], string[]>> = {
+  Fiction: ['fiction', 'literary fiction'],
+  'Non-Fiction': ['non-fiction', 'nonfiction'],
+  'Science Fiction': [
+    'science fiction',
+    'sci-fi',
+    'sci fi',
+    'scifi',
+    'cyberpunk',
+    'dystopian',
+    'dystopia',
+    'space opera',
+  ],
+  Fantasy: ['fantasy', 'dark fantasy', 'epic fantasy', 'urban fantasy', 'high fantasy'],
+  Mystery: ['mystery', 'detective', 'crime fiction', 'whodunit'],
+  Thriller: ['thriller', 'suspense', 'psychological thriller'],
+  Romance: ['romance', 'romantasy', 'love story', 'love stories'],
+  Horror: ['horror', 'gothic', 'supernatural horror'],
+  Biography: ['biography', 'autobiography', 'memoir', 'memoirs'],
+  History: ['history', 'historical'],
+  Science: ['science', 'physics', 'biology', 'chemistry', 'astronomy'],
+  Technology: ['technology', 'programming', 'computer science', 'engineering'],
+  'Self-Help': ['self-help', 'self help', 'personal development'],
+  Poetry: ['poetry', 'poems', 'verse'],
+  Drama: ['drama', 'play', 'plays', 'theatre', 'theater'],
+  Comedy: ['comedy', 'humor', 'humour', 'satire'],
+  Adventure: ['adventure', 'action adventure'],
+  Children: ['children', "children's", 'middle grade', 'picture book', 'juvenile'],
+  'Young Adult': ['young adult', 'ya', 'teen'],
+  'Graphic Novel': ['graphic novel', 'graphic novels', 'comics', 'manga'],
+};
 
 function isComplexQuery(query: string): boolean {
   const words = query.trim().split(/\s+/);
@@ -84,28 +92,44 @@ function isComplexQuery(query: string): boolean {
   return COMPLEX_PHRASES.some((phrase) => lower.includes(phrase));
 }
 
-function tokenize(text: string): string[] {
-  return text
-    .toLowerCase()
-    .split(/[^a-z0-9]+/i)
-    .map((token) => token.trim())
-    .filter((token) => token.length > 1 && !STOP_WORDS.has(token));
-}
-
-function inferGenreFromQuery(query: string): string | undefined {
+export function inferGenresFromQuery(query: string): string[] {
   const lowered = query.toLowerCase();
-  const exactGenre = GENRES.find((genre) =>
-    lowered.includes(genre.toLowerCase())
-  );
+  const matches = new Set<string>();
 
-  if (exactGenre) {
-    return exactGenre;
+  for (const genre of GENRES) {
+    const patterns = QUERY_GENRE_PATTERNS[genre] ?? [genre.toLowerCase()];
+    if (patterns.some((pattern) => lowered.includes(pattern))) {
+      matches.add(genre);
+    }
   }
 
-  const normalized = normalizeGenres(query);
-  return normalized[0] === 'Fiction' && !lowered.includes('fiction')
-    ? undefined
-    : normalized[0];
+  return Array.from(matches);
+}
+
+export function getStructuredGenres(
+  params?: Pick<StructuredSearchParams, 'genres' | 'genre'>
+): string[] {
+  if (!params) return [];
+
+  const rawGenres = [
+    ...(params.genres ?? []),
+    ...(params.genre ? [params.genre] : []),
+  ].filter(Boolean);
+
+  if (rawGenres.length === 0) return [];
+
+  const normalized = normalizeGenres(rawGenres);
+  const rawLower = rawGenres.join(' ').toLowerCase();
+
+  if (
+    normalized.length === 1 &&
+    normalized[0] === 'Fiction' &&
+    !rawLower.includes('fiction')
+  ) {
+    return [];
+  }
+
+  return normalized;
 }
 
 // --- Timeout helper: races a promise against a deadline ---
@@ -127,79 +151,19 @@ export function rankSearchResultsLocally(
 ): RankedResult[] {
   if (books.length === 0) return [];
 
-  const queryLower = query.toLowerCase();
-  const queryTokens = tokenize(queryLower);
-  const requestedTitle = params?.title?.toLowerCase().trim();
-  const requestedAuthor = params?.author?.toLowerCase().trim();
-  const genre = params?.genre?.toLowerCase().trim();
-  const keywords = (params?.keywords ?? []).flatMap(tokenize);
-  const concepts = (params?.concepts ?? []).flatMap(tokenize);
+  const signals = buildQuerySignals(query, {
+    searchQuery: params?.searchQuery || query,
+    title: params?.title,
+    author: params?.author,
+    genres: params?.genres,
+    genre: params?.genre,
+    keywords: params?.keywords,
+    concepts: params?.concepts,
+  });
 
   return books
     .map((book) => {
-      let score = 0;
-      const titleLower = (book.title ?? '').toLowerCase();
-      const authorLower = (book.author_name ?? []).join(' ').toLowerCase();
-      const subjects = (book.subject ?? []).map((s) => s.toLowerCase());
-      const combinedText = `${titleLower} ${authorLower} ${subjects.join(' ')}`;
-
-      if (requestedTitle && titleLower === requestedTitle) {
-        score += 1.15;
-      } else if (requestedTitle && titleLower.includes(requestedTitle)) {
-        score += 0.9;
-      } else if (titleLower === queryLower) {
-        score += 1.0;
-      } else if (titleLower.includes(queryLower)) {
-        score += 0.7;
-      }
-
-      if (requestedAuthor) {
-        if (authorLower.includes(requestedAuthor)) {
-          score += 0.8;
-        } else {
-          score -= 0.2;
-        }
-      }
-
-      if (queryTokens.length > 0) {
-        const titleHits = queryTokens.filter((token) =>
-          titleLower.includes(token)
-        ).length;
-        const authorHits = queryTokens.filter((token) =>
-          authorLower.includes(token)
-        ).length;
-        const subjectHits = queryTokens.filter((token) =>
-          subjects.some((subject) => subject.includes(token))
-        ).length;
-
-        score += (titleHits / queryTokens.length) * 0.45;
-        score += (authorHits / queryTokens.length) * 0.3;
-        score += (subjectHits / queryTokens.length) * 0.2;
-      }
-
-      // Genre / subject match
-      if (genre) {
-        if (subjects.some((s) => s.includes(genre))) {
-          score += 0.45;
-        } else {
-          score -= 0.15;
-        }
-      }
-
-      // Keyword and concept matches against the full searchable text
-      if (keywords.length > 0) {
-        const kwHits = keywords.filter((kw) =>
-          combinedText.includes(kw),
-        ).length;
-        score += (kwHits / keywords.length) * 0.35;
-      }
-
-      if (concepts.length > 0) {
-        const conceptHits = concepts.filter((concept) =>
-          combinedText.includes(concept),
-        ).length;
-        score += (conceptHits / concepts.length) * 0.2;
-      }
+      let score = scoreOpenLibraryCandidate(book, signals);
 
       // Small boost for books with ratings (popularity proxy)
       if (book.ratings_count && book.ratings_count > 0) {
@@ -214,9 +178,9 @@ export function rankSearchResultsLocally(
       }
 
       const reason = score > 0.9
-        ? 'Strong match on title, author, and subject.'
+        ? 'Strong match on query intent and subject.'
         : score > 0.55
-          ? 'Good match on several search signals.'
+          ? 'Good match across semantic and textual signals.'
           : 'Broader match included for variety.';
 
       return { book, score: Math.min(score, 1), reason };
@@ -297,9 +261,11 @@ export async function naturalLanguageBookSearch(
 
   // Simple queries skip AI entirely
   if (!isComplexQuery(query)) {
+    const inferredGenres = inferGenresFromQuery(query);
     const result: StructuredSearchParams = {
       searchQuery: query,
-      genre: inferGenreFromQuery(query),
+      genres: inferredGenres.length > 0 ? inferredGenres : undefined,
+      genre: inferredGenres[0],
       keywords: tokenize(query).slice(0, 6),
     };
     searchCache.set(query, result);
@@ -315,7 +281,7 @@ Respond with JSON only in this shape:
   "searchQuery": "concise search query",
   "title": "specific title if clearly requested",
   "author": "specific author if clearly requested",
-  "genre": "best matching genre if implied",
+  "genres": ["one or more matching genres if explicit"],
   "keywords": ["important concrete terms"],
   "concepts": ["themes or abstract ideas"]
 }
@@ -323,13 +289,13 @@ Respond with JSON only in this shape:
 Rules:
 - Preserve explicit titles and author names when present.
 - Keep searchQuery short and optimized for finding relevant books.
-- Prefer a single best matching genre from common library genres.
+- Return multiple genres when the request clearly names multiple genres.
 - Do not invent values that are not supported by the query.
 
 Examples:
-- "something like Harry Potter but darker" -> {"searchQuery":"dark fantasy magic boarding school","title":"Harry Potter","genre":"Fantasy","keywords":["dark","magic","boarding school"],"concepts":["coming of age"]}
-- "books by Octavia Butler" -> {"searchQuery":"Octavia Butler","author":"Octavia Butler","genre":"Science Fiction","keywords":["Octavia Butler"]}
-- "a sad literary novel about grief" -> {"searchQuery":"literary grief novel","genre":"Fiction","keywords":["literary","grief","novel"],"concepts":["loss","mourning"]}`;
+- "something like Harry Potter but darker" -> {"searchQuery":"dark fantasy magic boarding school","title":"Harry Potter","genres":["Fantasy"],"keywords":["dark","magic","boarding school"],"concepts":["coming of age"]}
+- "books by Octavia Butler" -> {"searchQuery":"Octavia Butler","author":"Octavia Butler","genres":["Science Fiction"],"keywords":["Octavia Butler"]}
+- "a dark fantasy romance book with strong female lead" -> {"searchQuery":"dark fantasy romance strong female lead","genres":["Fantasy","Romance"],"keywords":["dark","strong female lead"],"concepts":["romance"]}`;
 
     const response = await withTimeout(
       getDeepSeekClient().chat.completions.create({
@@ -354,23 +320,36 @@ Examples:
     if (!jsonMatch) throw new Error('Invalid JSON');
 
     const parsed = JSON.parse(jsonMatch[0]);
+    const parsedGenres = getStructuredGenres({
+      genres: Array.isArray(parsed.genres)
+        ? parsed.genres.filter((value: unknown): value is string => typeof value === 'string')
+        : undefined,
+      genre: typeof parsed.genre === 'string' ? parsed.genre : undefined,
+    });
 
     const result: StructuredSearchParams = {
       searchQuery: parsed.searchQuery || query,
       title: parsed.title,
       author: parsed.author,
-      genre: parsed.genre,
-      keywords: parsed.keywords,
-      concepts: parsed.concepts,
+      genres: parsedGenres.length > 0 ? parsedGenres : undefined,
+      genre: parsedGenres[0],
+      keywords: Array.isArray(parsed.keywords)
+        ? parsed.keywords.filter((value: unknown): value is string => typeof value === 'string')
+        : undefined,
+      concepts: Array.isArray(parsed.concepts)
+        ? parsed.concepts.filter((value: unknown): value is string => typeof value === 'string')
+        : undefined,
     };
 
     searchCache.set(query, result);
     return result;
   } catch {
     // Fallback: use raw query on any failure (timeout, network, parse error)
+    const inferredGenres = inferGenresFromQuery(query);
     const fallback: StructuredSearchParams = {
       searchQuery: query,
-      genre: inferGenreFromQuery(query),
+      genres: inferredGenres.length > 0 ? inferredGenres : undefined,
+      genre: inferredGenres[0],
       keywords: tokenize(query).slice(0, 6),
     };
     searchCache.set(query, fallback);
