@@ -18,36 +18,6 @@ import { createClient } from '@/lib/supabase/client';
 import { NotificationDropdown } from '@/components/layout/notification-dropdown';
 import type { Book } from '@/types';
 
-// --- Page Title Mapping ---
-
-const pageTitles: Record<string, string> = {
-  '/dashboard': 'Dashboard',
-  '/books': 'Browse Books',
-  '/discover': 'Discover',
-  '/favorites': 'Favorites',
-  '/history': 'Borrowing History',
-  '/messages': 'Messages',
-  '/profile': 'Profile',
-  '/tickets': 'Support',
-  '/admin/users': 'Manage Users',
-  '/admin/books': 'Manage Books',
-  '/admin/analytics': 'Analytics',
-  '/admin/tickets': 'Support Tickets',
-};
-
-function getPageTitle(pathname: string): string {
-  if (pageTitles[pathname]) return pageTitles[pathname];
-
-  const segments = pathname.split('/').filter(Boolean);
-  while (segments.length > 0) {
-    const candidate = '/' + segments.join('/');
-    if (pageTitles[candidate]) return pageTitles[candidate];
-    segments.pop();
-  }
-
-  return 'Dashboard';
-}
-
 // --- Types ---
 
 interface AISearchResult {
@@ -71,8 +41,6 @@ export function Header() {
   const pathname = usePathname();
   const { profile, user } = useAuth();
   const toggle = useSidebarStore((s) => s.toggle);
-
-  const _title = getPageTitle(pathname);
 
   // Search state
   const [searchOpen, setSearchOpen] = useState(false);
