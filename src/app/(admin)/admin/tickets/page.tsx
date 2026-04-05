@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
   AlertCircle,
@@ -381,7 +381,7 @@ function TicketRow({ ticket, expanded, onToggle, onUpdate, currentAdminId, admin
   );
 }
 
-export default function AdminTicketsPage() {
+function AdminTicketsContent() {
   const searchParams = useSearchParams();
   const [allTickets, setAllTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
@@ -563,5 +563,13 @@ export default function AdminTicketsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function AdminTicketsPage() {
+  return (
+    <Suspense fallback={<TicketsSkeleton />}>
+      <AdminTicketsContent />
+    </Suspense>
   );
 }
