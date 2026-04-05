@@ -31,8 +31,6 @@ export async function updateSession(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
 
-  console.log('[Middleware]', pathname, '| user:', user ? user.email : 'null');
-
   // Public routes that must remain accessible before a session exists.
   // OAuth callbacks arrive unauthenticated and exchange the code for a session here.
   const isPublicRoute =
@@ -43,7 +41,6 @@ export async function updateSession(request: NextRequest) {
 
   // Helper: create a redirect that preserves refreshed session cookies
   const redirectWithCookies = (destination: string) => {
-    console.log('[Middleware] Redirecting', pathname, '->', destination);
     const url = request.nextUrl.clone();
     url.pathname = destination;
     const response = NextResponse.redirect(url);

@@ -72,7 +72,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      console.log('[AuthProvider] onAuthStateChange: event =', _event, '| user =', session?.user?.email ?? 'null');
       setUser(session?.user ?? null);
       if (!session?.user) {
         setProfile(null);
@@ -91,10 +90,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     let cancelled = false;
     const loadProfile = async () => {
-      console.log('[AuthProvider] fetchProfile: loading profile for', user.email);
       const userProfile = await fetchProfile(user.id);
       if (!cancelled) {
-        console.log('[AuthProvider] fetchProfile: profile =', userProfile?.name ?? 'null');
         setProfile(userProfile);
         setLoading(false);
       }
@@ -143,9 +140,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const signOut = async (): Promise<{ error: AuthError | null }> => {
-    console.log('[AuthProvider] signOut: starting...');
     const { error } = await supabase.auth.signOut({ scope: 'local' });
-    console.log('[AuthProvider] signOut: result =', error ? error.message : 'success');
     setUser(null);
     setProfile(null);
     // Force clear all supabase cookies in case signOut didn't

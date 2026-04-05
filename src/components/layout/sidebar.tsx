@@ -82,7 +82,6 @@ export function Sidebar() {
   }, [pathname, setMobileOpen]);
 
   const handleSignOut = async () => {
-    console.log('[Sidebar] Logout button clicked');
     try {
       await supabase.auth.signOut({ scope: 'local' });
     } catch {
@@ -95,7 +94,6 @@ export function Sidebar() {
         document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
       }
     });
-    console.log('[Sidebar] Cookies cleared, redirecting to /login');
     window.location.href = '/api/auth/signout';
   };
 

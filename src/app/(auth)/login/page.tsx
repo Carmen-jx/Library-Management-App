@@ -40,8 +40,6 @@ export default function LoginPage() {
 
     const { error: signInError } = await signIn({ email, password });
 
-    console.log('[LoginPage] signIn result:', signInError ? signInError.message : 'success');
-
     if (signInError) {
       setError(signInError.message);
       setIsSubmitting(false);
