@@ -8,11 +8,6 @@ interface CreateTicketData {
   priority?: TicketPriority;
 }
 
-interface AdminTaskCount {
-  assigned_to: string;
-  active_count: number;
-}
-
 /**
  * Get the number of active (non-resolved) tasks assigned to each admin
  */

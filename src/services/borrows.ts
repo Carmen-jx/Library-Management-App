@@ -18,7 +18,7 @@ export async function borrowBook(userId: string, bookId: string) {
   return data as unknown as Borrow;
 }
 
-export async function returnBook(borrowId: string, bookId: string) {
+export async function returnBook(borrowId: string, _bookId: string) {
   const supabase = createClient();
 
   const { data, error } = await supabase.rpc('return_book', {

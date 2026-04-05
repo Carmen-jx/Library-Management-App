@@ -65,7 +65,7 @@ export async function fetchAnalyticsData(): Promise<AnalyticsData> {
     activeBorrowsResult,
     borrowsLast7dResult,
     repeatBorrowResult,
-    totalBorrowersResult,
+    _totalBorrowersResult,
     // Inventory
     totalBooksResult,
     availableBooksResult,
