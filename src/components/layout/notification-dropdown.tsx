@@ -14,6 +14,7 @@ const TYPE_ICONS: Record<NotificationType, typeof UserPlus> = {
   connection_accepted: UserCheck,
   ticket_created: TicketIcon,
   ticket_updated: MessageSquare,
+  ticket_assigned: TicketIcon,
 };
 
 export function NotificationDropdown() {
