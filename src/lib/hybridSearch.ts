@@ -64,7 +64,7 @@ function keywordRankScore(index: number, total: number): number {
   return clamp01(1 - index / total);
 }
 
-function normalizeFeedbackQuery(query: string): string {
+export function normalizeFeedbackQuery(query: string): string {
   return query.trim().replace(/\s+/g, ' ');
 }
 
@@ -235,7 +235,7 @@ async function keywordSearch(
   }
 }
 
-async function fetchFeedbackMap(
+export async function fetchFeedbackMap(
   supabase: SupabaseClient,
   query: string
 ): Promise<Map<string, number>> {

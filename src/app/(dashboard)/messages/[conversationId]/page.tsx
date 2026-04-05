@@ -102,7 +102,7 @@ export default function ConversationPage() {
   );
 
   return (
-    <div className="flex h-[calc(100vh-theme(spacing.16))] flex-col">
+    <div className="flex h-[calc(100dvh-7rem)] min-h-0 flex-col overflow-hidden">
       {/* Sticky Header */}
       <div className="sticky top-0 z-10 flex items-center gap-3 border-b bg-background px-4 py-3">
         <Button
@@ -140,7 +140,7 @@ export default function ConversationPage() {
       {/* Message List */}
       <div
         ref={scrollContainerRef}
-        className="flex flex-1 flex-col gap-1 overflow-y-auto px-4 py-4"
+        className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-4 py-4"
       >
         {chat.loading ? (
           <div className="flex flex-1 items-center justify-center">

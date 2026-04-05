@@ -20,6 +20,7 @@ interface RecommendationParams {
   borrowHistory: string[];
   genres: string[];
   recentSearches?: string[];
+  previousRecommendations?: string[];
 }
 
 interface StructuredSearchParams {
@@ -192,7 +193,7 @@ export function rankSearchResultsLocally(
 export async function getBookRecommendations(
   params: RecommendationParams
 ): Promise<BookRecommendation[]> {
-  const { favorites, borrowHistory, genres, recentSearches } = params;
+  const { favorites, borrowHistory, genres, recentSearches, previousRecommendations } = params;
 
   const profileSections: string[] = [];
 
@@ -208,8 +209,11 @@ export async function getBookRecommendations(
   if (recentSearches && recentSearches.length > 0) {
     profileSections.push(`Searches: ${recentSearches.join(', ')}`);
   }
+  if (previousRecommendations && previousRecommendations.length > 0) {
+    profileSections.push(`Previously recommended (DO NOT repeat these): ${previousRecommendations.join(', ')}`);
+  }
 
-  const prompt = `Recommend 5-10 books for this reader. Exclude books already listed.
+  const prompt = `Recommend 5-10 NEW and DIFFERENT books for this reader. Exclude books already listed and any previously recommended books.
 
 ${profileSections.join('\n')}
 
@@ -220,12 +224,12 @@ Respond with JSON only: {"recommendations":[{"title":"...","author":"...","reaso
     messages: [
       {
         role: 'system',
-        content: 'Book recommendation expert. Respond with valid JSON only.',
+        content: 'Book recommendation expert. Respond with valid JSON only. Keep each "reason" field under 20 words.',
       },
       { role: 'user', content: prompt },
     ],
     temperature: 0.8,
-    max_tokens: 500,
+    max_tokens: 1200,
   });
 
   const content = response.choices[0]?.message?.content;
@@ -238,15 +242,45 @@ Respond with JSON only: {"recommendations":[{"title":"...","author":"...","reaso
     throw new Error('Failed to parse JSON from DeepSeek response');
   }
 
-  const parsed = JSON.parse(jsonMatch[0]);
+  let parsed: { recommendations?: Array<{ title: string; author: string; reason: string; genre: string }> };
+  try {
+    parsed = JSON.parse(jsonMatch[0]);
+  } catch {
+    // Response was likely truncated — try to salvage complete entries
+    const arrayMatch = jsonMatch[0].match(/\[[\s\S]*/);
+    if (!arrayMatch) {
+      throw new Error('Failed to parse JSON from DeepSeek response (truncated)');
+    }
+    // Remove the last incomplete object and close the array
+    const repaired = arrayMatch[0].replace(/,\s*\{[^}]*$/, '').replace(/\]\s*\}?\s*$/, ']');
+    const closedArray = repaired.endsWith(']') ? repaired : repaired + ']';
+    try {
+      parsed = { recommendations: JSON.parse(closedArray) };
+    } catch {
+      throw new Error('Failed to repair truncated JSON from DeepSeek response');
+    }
+  }
+
   const recommendations: BookRecommendation[] = (
     parsed.recommendations || []
-  ).map((rec: { title: string; author: string; reason: string; genre: string }) => ({
-    title: rec.title,
-    author: rec.author,
-    reason: rec.reason,
-    genre: rec.genre,
-  }));
+  )
+    .filter(
+      (rec) =>
+        typeof rec.title === 'string' &&
+        typeof rec.author === 'string' &&
+        rec.title.length > 0 &&
+        rec.author.length > 0
+    )
+    .map((rec: { title: string; author: string; reason: string; genre: string }) => ({
+      title: rec.title,
+      author: rec.author,
+      reason: rec.reason ?? '',
+      genre: rec.genre ?? '',
+    }));
+
+  if (recommendations.length === 0) {
+    throw new Error('DeepSeek returned no valid recommendations');
+  }
 
   return recommendations;
 }

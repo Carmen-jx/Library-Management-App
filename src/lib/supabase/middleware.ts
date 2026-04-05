@@ -33,9 +33,13 @@ export async function updateSession(request: NextRequest) {
 
   console.log('[Middleware]', pathname, '| user:', user ? user.email : 'null');
 
-  // Public routes that don't need auth
-  const publicRoutes = ['/', '/login', '/signup'];
-  const isPublicRoute = publicRoutes.includes(pathname);
+  // Public routes that must remain accessible before a session exists.
+  // OAuth callbacks arrive unauthenticated and exchange the code for a session here.
+  const isPublicRoute =
+    pathname === '/' ||
+    pathname === '/login' ||
+    pathname === '/signup' ||
+    pathname.startsWith('/auth/callback');
 
   // Helper: create a redirect that preserves refreshed session cookies
   const redirectWithCookies = (destination: string) => {

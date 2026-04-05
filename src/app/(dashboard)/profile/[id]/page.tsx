@@ -128,17 +128,23 @@ export default function UserProfilePage() {
     setActionLoading(true);
     try {
       const conn = await sendConnectionRequest(user.id, userId);
-      await logActivity(user.id, 'connection_request', { targetId: userId });
-      await createNotification(
-        user.id,
-        userId,
-        'connection_request',
-        'New Connection Request',
-        `${myProfile?.name ?? 'Someone'} wants to connect with you.`,
-        `/profile/${user.id}`
-      );
       setConnection(conn);
       toast.success('Connection request sent!');
+
+      // Non-blocking: log activity and notify receiver
+      Promise.all([
+        logActivity(user.id, 'connection_request', { targetId: userId }).catch((err) =>
+          console.error('Failed to log activity:', err)
+        ),
+        createNotification(
+          user.id,
+          userId,
+          'connection_request',
+          'New Connection Request',
+          `${myProfile?.name ?? 'Someone'} wants to connect with you.`,
+          `/profile/${user.id}`
+        ).catch((err) => console.error('Failed to send notification:', err)),
+      ]);
     } catch {
       toast.error('Failed to send request. Please try again.');
     } finally {
@@ -152,18 +158,24 @@ export default function UserProfilePage() {
     setActionLoading(true);
     try {
       const updated = await acceptConnection(connection.id);
-      await logActivity(user.id, 'connection_accepted', { targetId: userId });
-      await createNotification(
-        user.id,
-        connection.requester_id,
-        'connection_accepted',
-        'Connection Accepted',
-        `${myProfile?.name ?? 'Someone'} accepted your connection request.`,
-        `/profile/${user.id}`
-      );
       setConnection(updated);
       setConnectionCount((prev) => prev + 1);
       toast.success('Connection accepted!');
+
+      // Non-blocking: log activity and notify
+      Promise.all([
+        logActivity(user.id, 'connection_accepted', { targetId: userId }).catch((err) =>
+          console.error('Failed to log activity:', err)
+        ),
+        createNotification(
+          user.id,
+          connection.requester_id,
+          'connection_accepted',
+          'Connection Accepted',
+          `${myProfile?.name ?? 'Someone'} accepted your connection request.`,
+          `/profile/${user.id}`
+        ).catch((err) => console.error('Failed to send notification:', err)),
+      ]);
     } catch {
       toast.error('Failed to accept connection. Please try again.');
     } finally {

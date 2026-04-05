@@ -7,14 +7,10 @@ import { useRouter } from 'next/navigation';
 import {
   ArrowRight,
   BookOpen,
-  Heart,
   Sparkles,
   CheckCircle,
   AlertCircle,
   Loader2,
-  TrendingUp,
-  Tag,
-  User,
   Clock,
   X,
   Users,
@@ -33,7 +29,7 @@ import { timeAgo, formatDate } from '@/lib/utils';
 import { getUserRecommendations } from '@/services/recommendations';
 import { returnBook } from '@/services/borrows';
 import { logActivity } from '@/services/activity';
-import { fetchAllDashboardData, type DashboardData, type FriendBorrow } from '@/lib/userDashboard';
+import { fetchAllDashboardData, type DashboardData } from '@/lib/userDashboard';
 import type { BookRecommendation, Book, Borrow } from '@/types';
 
 // --- Types ---
@@ -43,37 +39,6 @@ interface RecentActivity {
   bookTitle: string;
   action: 'borrowed' | 'returned';
   date: string;
-}
-
-// --- Stat Card ---
-
-function InsightCard({
-  icon: Icon,
-  label,
-  value,
-  subtitle,
-  color,
-}: {
-  icon: typeof BookOpen;
-  label: string;
-  value: string | number;
-  subtitle?: string;
-  color: string;
-}) {
-  return (
-    <Card padding="md">
-      <div className="flex items-center gap-3">
-        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${color}`}>
-          <Icon className="h-5 w-5 text-white" />
-        </div>
-        <div className="min-w-0">
-          <p className="text-xs font-medium text-gray-500">{label}</p>
-          <p className="truncate text-lg font-bold text-gray-900">{value}</p>
-          {subtitle && <p className="truncate text-xs text-gray-400">{subtitle}</p>}
-        </div>
-      </div>
-    </Card>
-  );
 }
 
 // --- Recommendation Skeleton ---
@@ -128,21 +93,6 @@ function DashboardSkeleton() {
             </Card>
           ))}
         </div>
-      </div>
-
-      {/* Stats row */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <Card key={i} padding="md">
-            <div className="flex items-center gap-3">
-              <Skeleton variant="rectangular" className="h-10 w-10 rounded-lg" />
-              <div className="space-y-1.5">
-                <Skeleton className="h-3 w-16" />
-                <Skeleton className="h-5 w-10" />
-              </div>
-            </div>
-          </Card>
-        ))}
       </div>
 
       {/* Recommendations */}
@@ -278,34 +228,40 @@ export default function DashboardPage() {
   }, [profile]);
 
   useEffect(() => {
-    if (authLoading || !profile) return;
+    if (authLoading) return;
+    if (!profile) {
+      // Auth finished but profile not loaded yet — stop showing skeleton
+      setLoading(false);
+      return;
+    }
     loadDashboard();
   }, [authLoading, profile, loadDashboard]);
 
   // Recommendations (separate fetch)
+  const fetchRecommendations = useCallback(async (forceRefresh = false) => {
+    if (!profile) return;
+    setRecommendationsLoading(true);
+    setRecommendationsError(null);
+    setShowingStaleRecommendations(false);
+    try {
+      const result = await getUserRecommendations(profile.id, { forceRefresh });
+      setRecommendations(result.recommendations);
+      setRecommendationsRefreshedAt(result.refreshedAt);
+      setShowingStaleRecommendations(result.stale);
+    } catch (error) {
+      console.error('Failed to load recommendations:', error);
+      setRecommendationsError(
+        error instanceof Error ? error.message : 'Failed to load recommendations.'
+      );
+    } finally {
+      setRecommendationsLoading(false);
+    }
+  }, [profile]);
+
   useEffect(() => {
     if (authLoading || !profile) return;
-
-    const fetchRecommendations = async () => {
-      setRecommendationsLoading(true);
-      setRecommendationsError(null);
-      try {
-        const result = await getUserRecommendations(profile.id);
-        setRecommendations(result.recommendations);
-        setRecommendationsRefreshedAt(result.refreshedAt);
-        setShowingStaleRecommendations(result.stale);
-      } catch (error) {
-        console.error('Failed to load recommendations:', error);
-        setRecommendationsError(
-          error instanceof Error ? error.message : 'Failed to load recommendations.'
-        );
-      } finally {
-        setRecommendationsLoading(false);
-      }
-    };
-
     fetchRecommendations();
-  }, [profile, authLoading]);
+  }, [profile, authLoading, fetchRecommendations]);
 
   // --- Handlers ---
 
@@ -409,12 +365,9 @@ export default function DashboardPage() {
     <div className="space-y-8">
       {/* Welcome */}
       <div>
-        <h2 className="text-2xl font-bold text-gray-900">
+        <h2 className="text-5xl font-bold text-gray-900">
           Welcome back, {profile?.name?.split(' ')[0] || 'Reader'}!
         </h2>
-        <p className="mt-1 text-gray-500">
-          Here&apos;s what&apos;s happening with your library activity.
-        </p>
       </div>
 
       {/* ========== SECTION 1: ACTION ========== */}
@@ -548,64 +501,47 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* ========== SECTION 2: INSIGHTS ========== */}
-
-      {data && (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-          <InsightCard
-            icon={BookOpen}
-            label="Total Borrowed"
-            value={data.totalBorrowed}
-            color="bg-indigo-600"
-          />
-          <InsightCard
-            icon={Heart}
-            label="Favorites"
-            value={data.favoritesCount}
-            color="bg-rose-600"
-          />
-          <InsightCard
-            icon={TrendingUp}
-            label="This Month"
-            value={data.monthlyBorrowCount}
-            subtitle={`book${data.monthlyBorrowCount === 1 ? '' : 's'} borrowed`}
-            color="bg-emerald-600"
-          />
-          <InsightCard
-            icon={Tag}
-            label="Top Genre"
-            value={data.favoriteGenre ?? '\u2014'}
-            color="bg-violet-600"
-          />
-          <InsightCard
-            icon={User}
-            label="Top Author"
-            value={data.mostReadAuthor ?? '\u2014'}
-            color="bg-amber-600"
-          />
-        </div>
-      )}
-
-      {/* ========== SECTION 3: AI RECOMMENDATIONS ========== */}
+      {/* ========== SECTION 2: AI RECOMMENDATIONS ========== */}
 
       <Card>
         <Card.Header className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h3 className="flex items-center gap-2 text-base font-semibold text-gray-900">
               <Sparkles className="h-4 w-4 text-indigo-600" />
-              Recommended For You (auto refreshes every 3 days)
+              Recommended For You
             </h3>
           </div>
-          {recommendationsRefreshedAt && (
-            <p className="text-xs text-gray-500">
-              Last refreshed {timeAgo(recommendationsRefreshedAt)}
-            </p>
-          )}
+          <div className="flex items-center gap-3">
+            {recommendationsRefreshedAt && (
+              <p className="text-xs text-gray-500">
+                Last refreshed {timeAgo(recommendationsRefreshedAt)}
+              </p>
+            )}
+            {!recommendationsLoading && (
+              <button
+                type="button"
+                onClick={() => fetchRecommendations(true)}
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-indigo-600 hover:bg-indigo-50 transition-colors"
+                title="Refresh recommendations"
+              >
+                <RotateCcw className="h-3 w-3" />
+                Refresh
+              </button>
+            )}
+          </div>
         </Card.Header>
         <Card.Body className="space-y-4">
           {showingStaleRecommendations && recommendations.length > 0 && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-              Showing your last saved recommendations while the latest refresh is unavailable.
+            <div className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              <span>Couldn&apos;t refresh recommendations — showing your last saved list.</span>
+              <button
+                type="button"
+                onClick={() => fetchRecommendations(true)}
+                className="ml-3 inline-flex items-center gap-1 whitespace-nowrap rounded-md bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-900 hover:bg-amber-200 transition-colors"
+              >
+                <RotateCcw className="h-3 w-3" />
+                Try again
+              </button>
             </div>
           )}
 
@@ -703,7 +639,7 @@ export default function DashboardPage() {
         </Card.Body>
       </Card>
 
-      {/* ========== SECTION 4: ACTIVITY & DISCOVERY ========== */}
+      {/* ========== SECTION 3: ACTIVITY & DISCOVERY ========== */}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Recent Activity */}

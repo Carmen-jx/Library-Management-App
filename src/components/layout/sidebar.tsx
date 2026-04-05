@@ -81,11 +81,14 @@ export function Sidebar() {
     setMobileOpen(false);
   }, [pathname, setMobileOpen]);
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
     console.log('[Sidebar] Logout button clicked');
-    // Don't await signOut — it can hang. Clear state and cookies directly.
-    supabase.auth.signOut({ scope: 'local' }).catch(() => {});
-    // Force clear all supabase cookies
+    try {
+      await supabase.auth.signOut({ scope: 'local' });
+    } catch {
+      // Continue even if signOut fails
+    }
+    // Force clear all supabase cookies (including any httpOnly ones the browser allows)
     document.cookie.split(';').forEach((c) => {
       const cookieName = c.trim().split('=')[0];
       if (cookieName.startsWith('sb-')) {
@@ -93,7 +96,7 @@ export function Sidebar() {
       }
     });
     console.log('[Sidebar] Cookies cleared, redirecting to /login');
-    window.location.href = '/login';
+    window.location.href = '/api/auth/signout';
   };
 
   const isActive = (href: string) => {

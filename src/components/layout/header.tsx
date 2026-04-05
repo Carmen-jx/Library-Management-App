@@ -61,6 +61,8 @@ interface AISearchResult {
   relevanceReason: string;
   pageCount: number | null;
   averageRating: number | null;
+  source?: 'local' | 'open-library';
+  openLibraryKey?: string;
 }
 
 // --- Header Component ---
@@ -176,18 +178,28 @@ export function Header() {
     setNlError(null);
     setHasSearched(true);
     try {
-      const supabase = createClient();
       const q = nlQuery.trim();
-      const { data, error } = await supabase
-        .from('books')
-        .select('*')
-        .or(`title.ilike.%${q}%,author.ilike.%${q}%`)
-        .order('title')
-        .limit(20);
+      const supabase = createClient();
 
-      if (error) throw error;
+      // Search local library and Open Library in parallel
+      const [localSettled, olSettled] = await Promise.allSettled([
+        supabase
+          .from('books')
+          .select('*')
+          .or(`title.ilike.%${q}%,author.ilike.%${q}%`)
+          .order('title')
+          .limit(20),
+        fetch(`/api/search/open-library?q=${encodeURIComponent(q)}&limit=10`)
+          .then((res) => (res.ok ? res.json() : { results: [] })),
+      ]);
 
-      const mapped: AISearchResult[] = (data as Book[]).map((book) => ({
+      // Map local results
+      const localBooks: Book[] =
+        localSettled.status === 'fulfilled' && !localSettled.value.error
+          ? (localSettled.value.data as Book[])
+          : [];
+
+      const localMapped: AISearchResult[] = localBooks.map((book) => ({
         id: book.id,
         title: book.title,
         authors: [book.author],
@@ -195,12 +207,37 @@ export function Header() {
         coverImage: book.cover_url ?? null,
         categories: book.genre ?? [],
         relevanceScore: 1,
-        relevanceReason: 'Matched from library',
+        relevanceReason: 'Available in library',
         pageCount: (book.metadata?.pageCount as number) ?? null,
         averageRating: null,
+        source: 'local' as const,
+        openLibraryKey: book.open_library_key ?? undefined,
       }));
 
-      setNlResults(mapped);
+      // Extract Open Library results
+      const olResults: AISearchResult[] =
+        olSettled.status === 'fulfilled'
+          ? (olSettled.value.results ?? [])
+          : [];
+
+      // Deduplicate: remove OL results already in local library
+      const localKeys = new Set(
+        localMapped
+          .map((r) => r.openLibraryKey)
+          .filter((k): k is string => Boolean(k)),
+      );
+      const localTitles = new Set(
+        localMapped.map((r) => r.title.toLowerCase().trim()),
+      );
+
+      const filteredOl = olResults.filter((r) => {
+        if (r.openLibraryKey && localKeys.has(r.openLibraryKey)) return false;
+        if (localTitles.has(r.title.toLowerCase().trim())) return false;
+        return true;
+      });
+
+      // Merge: local first, then Open Library
+      setNlResults([...localMapped, ...filteredOl]);
     } catch (err) {
       console.error('Basic search failed:', err);
       setNlError(err instanceof Error ? err.message : 'Search failed');
@@ -291,6 +328,32 @@ export function Header() {
       if (!response.ok) {
         setFeedbackGiven((prev) => ({ ...prev, [bookId]: null }));
         toast.error('Failed to submit feedback.');
+        return;
+      }
+
+      // Re-fetch search results so scores reflect the new feedback
+      try {
+        const searchResponse = await fetch('/api/ai/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: nlQuery.trim() }),
+        });
+
+        if (searchResponse.ok) {
+          const data = await searchResponse.json();
+          const updatedResults: AISearchResult[] = data.results ?? [];
+          setNlResults(updatedResults);
+
+          // Update the selected result's score if the modal is still open
+          if (selectedResult) {
+            const updated = updatedResults.find((r: AISearchResult) => r.id === selectedResult.id);
+            if (updated) {
+              setSelectedResult(updated);
+            }
+          }
+        }
+      } catch {
+        // Non-critical: feedback was saved, just couldn't refresh scores
       }
     } catch {
       setFeedbackGiven((prev) => ({ ...prev, [bookId]: null }));
@@ -310,9 +373,6 @@ export function Header() {
       >
         <Menu className="h-5 w-5" />
       </button>
-
-      {/* Page Title */}
-      <h1 className="text-lg font-semibold text-gray-900">{title}</h1>
 
       {/* Spacer */}
       <div className="flex-1" />
@@ -371,7 +431,7 @@ export function Header() {
                 </div>
                 <p className="mt-1 text-xs text-gray-500">
                   {searchMode === 'basic'
-                    ? 'Search books by title or author.'
+                    ? 'Search our library and Open Library by title or author.'
                     : "Describe what you're looking for in your own words and let AI find the best matches."}
                 </p>
               </div>
@@ -467,6 +527,11 @@ export function Header() {
                             <h4 className="text-sm font-semibold leading-tight line-clamp-2 text-gray-900">
                               {result.title}
                             </h4>
+                            {result.source === 'open-library' && (
+                              <span className="inline-flex flex-shrink-0 items-center rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-600">
+                                Open Library
+                              </span>
+                            )}
                             {searchMode === 'ai' && (
                               <span className="inline-flex flex-shrink-0 items-center rounded-full bg-green-50 px-1.5 py-0.5 text-xs font-semibold text-green-700">
                                 {Math.round(result.relevanceScore * 100)}%

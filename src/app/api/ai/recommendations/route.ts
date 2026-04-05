@@ -6,7 +6,7 @@ import type { BookRecommendation } from '@/types';
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { favorites, borrowHistory, genres } = body;
+    const { favorites, borrowHistory, genres, previousRecommendations } = body;
 
     if (!Array.isArray(favorites) || !Array.isArray(borrowHistory) || !Array.isArray(genres)) {
       return NextResponse.json(
@@ -19,6 +19,7 @@ export async function POST(request: NextRequest) {
       favorites,
       borrowHistory,
       genres,
+      previousRecommendations: Array.isArray(previousRecommendations) ? previousRecommendations : [],
     });
 
     const enrichedRecommendations = await Promise.allSettled(

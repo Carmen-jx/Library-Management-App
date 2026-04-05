@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { inferGenresFromQuery } from '@/lib/api/ai';
-import { hybridBookSearch } from '@/lib/hybridSearch';
+import { hybridBookSearch, fetchFeedbackMap, normalizeFeedbackQuery } from '@/lib/hybridSearch';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { scoreBookCandidate, buildQuerySignals } from '@/lib/search/ranking';
 import type { Book } from '@/types';
+
+const MIN_HYBRID_THRESHOLD = 6;
+const FEEDBACK_BOOST_WEIGHT = 0.15;
 
 function formatBookResult(book: Book, score: number, reason: string) {
   return {
@@ -24,10 +27,15 @@ function formatBookResult(book: Book, score: number, reason: string) {
   };
 }
 
+interface ScoredFallbackResult {
+  book: Book;
+  score: number;
+}
+
 async function genreFallback(
   query: string,
   genres: string[],
-): Promise<Book[]> {
+): Promise<ScoredFallbackResult[]> {
   const supabase = createServerSupabaseClient();
 
   const genreQueries = genres.slice(0, 3).map((genre) =>
@@ -70,8 +78,13 @@ async function genreFallback(
     .map((book) => ({ book, score: scoreBookCandidate(book, signals) }))
     .filter(({ score }) => score >= 0.1)
     .sort((a, b) => b.score - a.score)
-    .slice(0, 12)
-    .map(({ book }) => book);
+    .slice(0, 12);
+}
+
+function hybridSourceReason(source: 'both' | 'semantic' | 'keyword'): string {
+  if (source === 'both') return 'Matched by semantic similarity and keyword search.';
+  if (source === 'semantic') return 'Matched by semantic similarity.';
+  return 'Matched by keyword search.';
 }
 
 export async function POST(request: NextRequest) {
@@ -87,27 +100,12 @@ export async function POST(request: NextRequest) {
     }
 
     const trimmedQuery = query.trim();
+    const requestedGenres = inferGenresFromQuery(trimmedQuery);
 
     // Primary: hybrid search (embedding + keyword + genre + feedback)
+    let hybridResults: Awaited<ReturnType<typeof hybridBookSearch>> = [];
     try {
-      const hybridResults = await hybridBookSearch(trimmedQuery);
-
-      if (hybridResults.length > 0) {
-        return NextResponse.json({
-          query: trimmedQuery,
-          source: 'hybrid',
-          results: hybridResults.map((r) => {
-            const reason =
-              r.source === 'both'
-                ? 'Matched by semantic similarity and keyword search.'
-                : r.source === 'semantic'
-                  ? 'Matched by semantic similarity.'
-                  : 'Matched by keyword search.';
-            return formatBookResult(r.book, r.score, reason);
-          }),
-          totalResults: hybridResults.length,
-        });
-      }
+      hybridResults = await hybridBookSearch(trimmedQuery);
     } catch (err) {
       console.error(
         'Hybrid search failed:',
@@ -115,18 +113,56 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Fallback: genre + keyword search against local library
-    const requestedGenres = inferGenresFromQuery(trimmedQuery);
-    const fallbackResults = await genreFallback(trimmedQuery, requestedGenres);
-
-    if (fallbackResults.length > 0) {
+    // If hybrid returned enough results, return them directly
+    if (hybridResults.length >= MIN_HYBRID_THRESHOLD) {
       return NextResponse.json({
         query: trimmedQuery,
-        source: 'local_fallback',
-        results: fallbackResults.map((book) =>
-          formatBookResult(book, 0.25, 'Closest match from your library.'),
+        source: 'hybrid',
+        results: hybridResults.map((r) =>
+          formatBookResult(r.book, r.score, hybridSourceReason(r.source)),
         ),
-        totalResults: fallbackResults.length,
+        totalResults: hybridResults.length,
+      });
+    }
+
+    // Supplement sparse hybrid results with genre fallback + feedback scoring
+    const supabase = createServerSupabaseClient();
+    const [fallbackResults, feedbackMap] = await Promise.all([
+      genreFallback(trimmedQuery, requestedGenres),
+      fetchFeedbackMap(supabase, normalizeFeedbackQuery(trimmedQuery)),
+    ]);
+
+    // Merge: hybrid results first, then fallback (deduped)
+    const seenIds = new Set<string>();
+    const merged: ReturnType<typeof formatBookResult>[] = [];
+
+    for (const r of hybridResults) {
+      seenIds.add(r.book.id);
+      merged.push(formatBookResult(r.book, r.score, hybridSourceReason(r.source)));
+    }
+
+    for (const { book, score: rawScore } of fallbackResults) {
+      if (seenIds.has(book.id)) continue;
+      seenIds.add(book.id);
+
+      // Normalize candidate score to 0-1 range and apply feedback boost
+      const feedbackScore = feedbackMap.get(book.id) ?? 0;
+      const feedbackBoost = Math.tanh(feedbackScore) * FEEDBACK_BOOST_WEIGHT;
+      const normalizedScore = Math.max(0, Math.min(1, rawScore / 2 + feedbackBoost));
+
+      merged.push(formatBookResult(book, normalizedScore, 'Matched from library.'));
+    }
+
+    // Sort by score descending and limit
+    merged.sort((a, b) => b.relevanceScore - a.relevanceScore);
+    const finalResults = merged.slice(0, 20);
+
+    if (finalResults.length > 0) {
+      return NextResponse.json({
+        query: trimmedQuery,
+        source: hybridResults.length > 0 ? 'hybrid_supplemented' : 'local_fallback',
+        results: finalResults,
+        totalResults: finalResults.length,
       });
     }
 

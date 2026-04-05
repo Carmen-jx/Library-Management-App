@@ -17,6 +17,9 @@ const geistMono = localFont({
 export const metadata: Metadata = {
   title: "Manos Library",
   description: "A modern library management system with AI-powered recommendations",
+  icons: {
+    icon: "/icon.svg",
+  },
 };
 
 export default function RootLayout({

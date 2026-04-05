@@ -103,17 +103,23 @@ export default function DiscoverPage() {
     setUserActionLoading(targetUserId, true);
     try {
       const connection = await sendConnectionRequest(user.id, targetUserId);
-      await logActivity(user.id, 'connection_request', { targetId: targetUserId });
-      await createNotification(
-        user.id,
-        targetUserId,
-        'connection_request',
-        'New Connection Request',
-        `${currentProfile?.name ?? 'Someone'} wants to connect with you.`,
-        `/profile/${user.id}`
-      );
       updateUserStatus(targetUserId, 'pending_outgoing', connection.id);
       toast.success('Connection request sent!');
+
+      // Non-blocking: log activity and notify receiver
+      Promise.all([
+        logActivity(user.id, 'connection_request', { targetId: targetUserId }).catch((err) =>
+          console.error('Failed to log activity:', err)
+        ),
+        createNotification(
+          user.id,
+          targetUserId,
+          'connection_request',
+          'New Connection Request',
+          `${currentProfile?.name ?? 'Someone'} wants to connect with you.`,
+          `/profile/${user.id}`
+        ).catch((err) => console.error('Failed to send notification:', err)),
+      ]);
     } catch (err) {
       console.error('Failed to send connection request:', err);
       toast.error('Failed to send request. Please try again.');
@@ -131,17 +137,23 @@ export default function DiscoverPage() {
     setUserActionLoading(targetUserId, true);
     try {
       await acceptConnection(targetUser.connectionId);
-      await logActivity(user.id, 'connection_accepted', { targetId: targetUserId });
-      await createNotification(
-        user.id,
-        targetUserId,
-        'connection_accepted',
-        'Connection Accepted',
-        `${currentProfile?.name ?? 'Someone'} accepted your connection request.`,
-        `/profile/${user.id}`
-      );
       updateUserStatus(targetUserId, 'connected');
       toast.success('Connection accepted!');
+
+      // Non-blocking: log activity and notify
+      Promise.all([
+        logActivity(user.id, 'connection_accepted', { targetId: targetUserId }).catch((err) =>
+          console.error('Failed to log activity:', err)
+        ),
+        createNotification(
+          user.id,
+          targetUserId,
+          'connection_accepted',
+          'Connection Accepted',
+          `${currentProfile?.name ?? 'Someone'} accepted your connection request.`,
+          `/profile/${user.id}`
+        ).catch((err) => console.error('Failed to send notification:', err)),
+      ]);
     } catch (err) {
       console.error('Failed to accept connection:', err);
       toast.error('Failed to accept connection. Please try again.');

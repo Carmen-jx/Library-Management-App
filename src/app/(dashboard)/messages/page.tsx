@@ -28,7 +28,7 @@ export default function MessagesPage() {
   };
 
   return (
-    <div className="flex h-[calc(100vh-theme(spacing.16))] flex-col">
+    <div className="flex h-[calc(100dvh-7rem)] min-h-0 flex-col overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between border-b px-6 py-4">
         <h1 className="text-2xl font-bold tracking-tight">Messages</h1>
@@ -42,9 +42,9 @@ export default function MessagesPage() {
         </Button>
       </div>
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* Conversation List */}
-        <div className="w-full border-r md:w-80">
+        <div className="min-h-0 w-full overflow-y-auto border-r md:w-80">
           {chat.loading ? (
             <div className="flex flex-col gap-1 p-2">
               {Array.from({ length: 5 }).map((_, i) => (

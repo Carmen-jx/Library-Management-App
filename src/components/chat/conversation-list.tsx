@@ -38,7 +38,7 @@ export function ConversationList({
   }
 
   return (
-    <div className="flex flex-col">
+    <div className="flex min-h-full flex-col">
       {sorted.map((conversation) => {
         const isActive = conversation.user.id === activeId;
 

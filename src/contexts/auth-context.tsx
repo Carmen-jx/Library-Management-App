@@ -33,6 +33,7 @@ export interface AuthContextValue {
   loading: boolean;
   signIn: (params: SignInParams) => Promise<{ error: AuthError | null }>;
   signUp: (params: SignUpParams) => Promise<{ error: AuthError | null }>;
+  signInWithGoogle: () => Promise<{ error: AuthError | null }>;
   signOut: () => Promise<{ error: AuthError | null }>;
   updateProfile: (params: UpdateProfileParams) => Promise<{ error: Error | null }>;
 }
@@ -131,6 +132,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { error };
   };
 
+  const signInWithGoogle = async (): Promise<{ error: AuthError | null }> => {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: `${window.location.origin}/auth/callback`,
+      },
+    });
+    return { error: error as AuthError | null };
+  };
+
   const signOut = async (): Promise<{ error: AuthError | null }> => {
     console.log('[AuthProvider] signOut: starting...');
     const { error } = await supabase.auth.signOut({ scope: 'local' });
@@ -174,7 +185,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, profile, loading, signIn, signUp, signOut, updateProfile }}
+      value={{ user, profile, loading, signIn, signUp, signInWithGoogle, signOut, updateProfile }}
     >
       {children}
     </AuthContext.Provider>

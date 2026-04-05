@@ -21,6 +21,17 @@ interface RecommendationSourceBook {
   genre: string[];
 }
 
+interface BorrowedBookReference {
+  title: string;
+  author: string;
+  open_library_key: string | null;
+}
+
+interface BorrowedBookLookup {
+  workKeys: Set<string>;
+  titleAuthorKeys: Set<string>;
+}
+
 function formatBookForPrompt(book: RecommendationSourceBook): string {
   return `${book.title} by ${book.author} (${getPrimaryGenre(book.genre)})`;
 }
@@ -31,6 +42,34 @@ function isCacheFresh(refreshedAt: string): boolean {
 
 function isCacheTableUnavailable(error: SupabaseLikeError): boolean {
   return error.code === '42P01' || error.code === 'PGRST205';
+}
+
+function normalizeText(value: string | null | undefined): string {
+  return (value ?? '').trim().toLowerCase();
+}
+
+function toWorkKey(openLibraryKey: string | null | undefined): string | null {
+  const normalized = normalizeText(openLibraryKey);
+  return normalized.length > 0 ? normalized : null;
+}
+
+function toTitleAuthorKey(title: string, author: string): string {
+  return `${normalizeText(title)}::${normalizeText(author)}`;
+}
+
+function filterBorrowedRecommendations(
+  recommendations: BookRecommendation[],
+  borrowedLookup: BorrowedBookLookup
+): BookRecommendation[] {
+  return recommendations.filter((recommendation) => {
+    const workKey = toWorkKey(recommendation.open_library_key);
+    if (workKey && borrowedLookup.workKeys.has(workKey)) {
+      return false;
+    }
+
+    const titleAuthorKey = toTitleAuthorKey(recommendation.title, recommendation.author);
+    return !borrowedLookup.titleAuthorKeys.has(titleAuthorKey);
+  });
 }
 
 function toError(error: unknown, fallback: string): Error {
@@ -98,13 +137,20 @@ async function buildRecommendationRequest(userId: string) {
   };
 }
 
-async function generateRecommendations(userId: string): Promise<BookRecommendation[]> {
+async function generateRecommendations(
+  userId: string,
+  previousRecommendations: BookRecommendation[] = []
+): Promise<BookRecommendation[]> {
   const payload = await buildRecommendationRequest(userId);
+
+  const excludeTitles = previousRecommendations.map(
+    (rec) => `${rec.title} by ${rec.author}`
+  );
 
   const response = await fetch('/api/ai/recommendations', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ ...payload, previousRecommendations: excludeTitles }),
   });
 
   if (!response.ok) {
@@ -166,27 +212,63 @@ async function saveCache(
   return data as RecommendationCache;
 }
 
+async function getBorrowedBookLookup(userId: string): Promise<BorrowedBookLookup> {
+  const supabase = createClient();
+
+  const { data, error } = await supabase
+    .from('borrows')
+    .select('book:books(title, author, open_library_key)')
+    .eq('user_id', userId)
+    .in('status', ['borrowed', 'overdue']);
+
+  if (error) {
+    throw toError(error, 'Failed to load borrowed books.');
+  }
+
+  const borrowedBooks = (data ?? [])
+    .map((row: Record<string, unknown>) => row.book as BorrowedBookReference | null)
+    .filter((book): book is BorrowedBookReference => Boolean(book));
+
+  return {
+    workKeys: new Set(
+      borrowedBooks
+        .map((book) => toWorkKey(book.open_library_key))
+        .filter((key): key is string => Boolean(key))
+    ),
+    titleAuthorKeys: new Set(
+      borrowedBooks.map((book) => toTitleAuthorKey(book.title, book.author))
+    ),
+  };
+}
+
 export async function getUserRecommendations(
-  userId: string
+  userId: string,
+  options?: { forceRefresh?: boolean }
 ): Promise<RecommendationResponse> {
+  const forceRefresh = options?.forceRefresh ?? false;
   const cache = await getCache(userId);
+  const borrowedLookup = await getBorrowedBookLookup(userId);
   const hasCachedRecommendations =
     Boolean(cache) && Array.isArray(cache?.recommendations) && cache!.recommendations.length > 0;
 
-  if (cache && hasCachedRecommendations && isCacheFresh(cache.refreshed_at)) {
+  if (!forceRefresh && cache && hasCachedRecommendations && isCacheFresh(cache.refreshed_at)) {
     return {
-      recommendations: cache.recommendations,
+      recommendations: filterBorrowedRecommendations(cache.recommendations, borrowedLookup),
       refreshedAt: cache.refreshed_at,
       stale: false,
     };
   }
 
   try {
-    const recommendations = await generateRecommendations(userId);
+    const previousRecs = hasCachedRecommendations ? cache!.recommendations : [];
+    const recommendations = filterBorrowedRecommendations(
+      await generateRecommendations(userId, previousRecs),
+      borrowedLookup
+    );
 
     if (recommendations.length === 0 && hasCachedRecommendations) {
       return {
-        recommendations: cache!.recommendations,
+        recommendations: filterBorrowedRecommendations(cache!.recommendations, borrowedLookup),
         refreshedAt: cache!.refreshed_at,
         stale: false,
       };
@@ -199,9 +281,11 @@ export async function getUserRecommendations(
       stale: false,
     };
   } catch (error) {
+    console.error('[Recommendations] Failed to generate fresh recommendations:', error);
+
     if (hasCachedRecommendations) {
       return {
-        recommendations: cache!.recommendations,
+        recommendations: filterBorrowedRecommendations(cache!.recommendations, borrowedLookup),
         refreshedAt: cache!.refreshed_at,
         stale: true,
       };
