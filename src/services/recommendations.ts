@@ -122,12 +122,12 @@ async function buildRecommendationRequest(userId: string) {
 
   const favorites = (favoritesResult.data ?? [])
     .map((row: Record<string, unknown>) => row.book as RecommendationSourceBook | null)
-    .filter((book): book is RecommendationSourceBook => Boolean(book))
+    .filter((book: RecommendationSourceBook | null): book is RecommendationSourceBook => Boolean(book))
     .map(formatBookForPrompt);
 
   const borrowHistory = (borrowsResult.data ?? [])
     .map((row: Record<string, unknown>) => row.book as RecommendationSourceBook | null)
-    .filter((book): book is RecommendationSourceBook => Boolean(book))
+    .filter((book: RecommendationSourceBook | null): book is RecommendationSourceBook => Boolean(book))
     .map(formatBookForPrompt);
 
   return {
@@ -227,16 +227,16 @@ async function getBorrowedBookLookup(userId: string): Promise<BorrowedBookLookup
 
   const borrowedBooks = (data ?? [])
     .map((row: Record<string, unknown>) => row.book as BorrowedBookReference | null)
-    .filter((book): book is BorrowedBookReference => Boolean(book));
+    .filter((book: BorrowedBookReference | null): book is BorrowedBookReference => Boolean(book));
 
   return {
     workKeys: new Set(
       borrowedBooks
-        .map((book) => toWorkKey(book.open_library_key))
-        .filter((key): key is string => Boolean(key))
+        .map((book: BorrowedBookReference) => toWorkKey(book.open_library_key))
+        .filter((key: string | null): key is string => Boolean(key))
     ),
     titleAuthorKeys: new Set(
-      borrowedBooks.map((book) => toTitleAuthorKey(book.title, book.author))
+      borrowedBooks.map((book: BorrowedBookReference) => toTitleAuthorKey(book.title, book.author))
     ),
   };
 }

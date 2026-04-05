@@ -45,7 +45,7 @@ export async function notifyAdmins(
   if (adminError) throw adminError;
   if (!admins || admins.length === 0) return;
 
-  const rows = admins.map((admin) => ({
+  const rows = admins.map((admin: { id: string }) => ({
     actor_id: actorId,
     user_id: admin.id,
     type,

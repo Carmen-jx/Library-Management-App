@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useCallback, useEffect, useMemo, useState } from 'react';
-import { User, AuthError } from '@supabase/supabase-js';
+import { User, AuthError, AuthChangeEvent, Session } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/client';
 import type { Profile } from '@/types';
 
@@ -71,7 +71,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange((_event: AuthChangeEvent, session: Session | null) => {
       setUser(session?.user ?? null);
       if (!session?.user) {
         setProfile(null);

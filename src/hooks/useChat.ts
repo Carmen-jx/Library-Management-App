@@ -27,7 +27,7 @@ export function useChat(userId: string | undefined) {
         const otherUser = msg.sender_id === userId ? msg.receiver as Profile : msg.sender as Profile;
         if (!convMap.has(otherUser.id)) {
           const unread = messages.filter(
-            (m) => m.sender_id === otherUser.id && m.receiver_id === userId && !m.read
+            (m: Message) => m.sender_id === otherUser.id && m.receiver_id === userId && !m.read
           ).length;
           convMap.set(otherUser.id, {
             user: otherUser,
@@ -118,8 +118,8 @@ export function useChat(userId: string | undefined) {
           schema: 'public',
           table: 'messages',
         },
-        (payload) => {
-          const newMsg = payload.new as Message;
+        (payload: { new: Record<string, unknown> }) => {
+          const newMsg = payload.new as unknown as Message;
           if (newMsg.sender_id === userId || newMsg.receiver_id === userId) {
             setActiveMessages((prev) => {
               if (prev.length > 0 && prev.some((m) => m.id === newMsg.id)) return prev;
