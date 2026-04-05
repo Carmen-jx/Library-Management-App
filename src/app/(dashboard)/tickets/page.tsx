@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
   AlertCircle,
@@ -144,7 +144,7 @@ function TicketThread({ ticket }: { ticket: Ticket }) {
   );
 }
 
-export default function TicketsPage() {
+function TicketsContent() {
   const { user } = useAuth();
   const searchParams = useSearchParams();
   const [tickets, setTickets] = useState<Ticket[]>([]);
@@ -556,5 +556,13 @@ export default function TicketsPage() {
         </div>
       </Modal>
     </div>
+  );
+}
+
+export default function TicketsPage() {
+  return (
+    <Suspense fallback={<TicketsSkeleton />}>
+      <TicketsContent />
+    </Suspense>
   );
 }
