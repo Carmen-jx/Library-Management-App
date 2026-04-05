@@ -246,8 +246,12 @@ export async function getUserRecommendations(
   options?: { forceRefresh?: boolean }
 ): Promise<RecommendationResponse> {
   const forceRefresh = options?.forceRefresh ?? false;
-  const cache = await getCache(userId);
-  const borrowedLookup = await getBorrowedBookLookup(userId);
+
+  // Fetch cache and borrowed-book lookup in parallel instead of sequentially
+  const [cache, borrowedLookup] = await Promise.all([
+    getCache(userId),
+    getBorrowedBookLookup(userId),
+  ]);
   const hasCachedRecommendations =
     Boolean(cache) && Array.isArray(cache?.recommendations) && cache!.recommendations.length > 0;
 

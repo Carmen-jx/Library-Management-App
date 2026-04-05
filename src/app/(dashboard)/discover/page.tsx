@@ -10,7 +10,6 @@ import {
   acceptConnection,
   rejectConnection,
   removeConnection,
-  getConnectionStatus,
 } from '@/services/connections';
 import { logActivity } from '@/services/activity';
 import { createNotification } from '@/services/notifications';
@@ -39,27 +38,39 @@ export default function DiscoverPage() {
     setLoading(true);
     try {
       const supabase = createClient();
-      const { data: profiles, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .neq('id', user.id);
 
-      if (error) throw error;
+      // Fetch profiles and all connections for this user in parallel (avoids N+1)
+      const [profilesResult, connectionsResult] = await Promise.all([
+        supabase.from('profiles').select('*').neq('id', user.id),
+        supabase
+          .from('connections')
+          .select('id, requester_id, receiver_id, status')
+          .or(`requester_id.eq.${user.id},receiver_id.eq.${user.id}`),
+      ]);
 
-      const usersWithStatus = await Promise.all(
-        (profiles ?? []).map(async (profile: Profile) => {
-          const connection = await getConnectionStatus(user.id, profile.id);
-          let status: UserWithStatus['connectionStatus'] = connection?.status ?? null;
-          if (status === 'pending' && connection?.requester_id === user.id) {
+      if (profilesResult.error) throw profilesResult.error;
+
+      // Build a lookup map: other-user-id → connection
+      const connectionMap = new Map<string, { id: string; requester_id: string; status: string }>();
+      for (const conn of connectionsResult.data ?? []) {
+        const otherId = conn.requester_id === user.id ? conn.receiver_id : conn.requester_id;
+        connectionMap.set(otherId, conn);
+      }
+
+      const usersWithStatus: UserWithStatus[] = (profilesResult.data ?? []).map(
+        (profile: Profile) => {
+          const conn = connectionMap.get(profile.id);
+          let status: UserWithStatus['connectionStatus'] = (conn?.status as ConnectionStatus) ?? null;
+          if (status === 'pending' && conn?.requester_id === user.id) {
             status = 'pending_outgoing';
           }
           return {
             profile,
             connectionStatus: status,
-            connectionId: connection?.id,
+            connectionId: conn?.id,
             actionLoading: false,
           };
-        })
+        }
       );
 
       setUsers(usersWithStatus);
