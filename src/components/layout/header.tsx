@@ -72,7 +72,7 @@ export function Header() {
   const { profile, user } = useAuth();
   const toggle = useSidebarStore((s) => s.toggle);
 
-  const title = getPageTitle(pathname);
+  const _title = getPageTitle(pathname);
 
   // Search state
   const [searchOpen, setSearchOpen] = useState(false);

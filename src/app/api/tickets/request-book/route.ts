@@ -74,7 +74,7 @@ export async function POST(request: NextRequest) {
     const trimmedMessage = message.trim();
 
     // Get the admin with least tasks for fair distribution
-    const assignedToAdmin = await getAdminWithLeastTasks();
+    const assignedToAdmin = await getAdminWithLeastTasksServer();
 
     const { data: ticket, error: ticketError } = await supabase
       .from('tickets')

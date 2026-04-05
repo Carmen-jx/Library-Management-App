@@ -11,7 +11,6 @@ import {
   Repeat,
   BookOpen,
   AlertTriangle,
-  Search,
   ArrowRightLeft,
   MessageCircle,
   Link2,
