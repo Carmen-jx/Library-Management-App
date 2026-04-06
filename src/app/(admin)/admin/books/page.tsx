@@ -11,7 +11,6 @@ import {
   Download,
   ChevronLeft,
   ChevronRight,
-  X,
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -20,8 +19,9 @@ import { GenreBadges } from '@/components/ui/genre-badges';
 import { Modal } from '@/components/ui/modal';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/components/ui/toast';
+import { GenreDropdown } from '@/components/ui/genre-dropdown';
 import { createClient } from '@/lib/supabase/client';
-import { GENRES, getPrimaryGenre, normalizeGenres } from '@/lib/utils';
+import { getPrimaryGenre, normalizeGenres } from '@/lib/utils';
 import type { Book, OpenLibraryWork, OpenLibrarySearchResponse } from '@/types';
 
 // --- Loading Skeleton ---
@@ -69,7 +69,7 @@ export default function AdminBooksPage() {
 
   // Library filter
   const [libraryFilter, setLibraryFilter] = useState('');
-  const [genreFilter, setGenreFilter] = useState<string | null>(null);
+  const [genreFilter, setGenreFilter] = useState<string[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const PAGE_SIZE = 50;
 
@@ -99,8 +99,8 @@ export default function AdminBooksPage() {
         );
       }
 
-      if (genreFilter) {
-        query = query.contains('genre', [genreFilter]);
+      if (genreFilter.length > 0) {
+        query = query.overlaps('genre', genreFilter);
       }
 
       const { data, count, error } = await query;
@@ -262,29 +262,12 @@ export default function AdminBooksPage() {
                 />
               </div>
             </div>
-            {/* Genre Filter Chips */}
-            <div className="flex flex-wrap gap-1.5">
-              {genreFilter && (
-                <button
-                  type="button"
-                  onClick={() => setGenreFilter(null)}
-                  className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-700 hover:bg-indigo-200 transition-colors"
-                >
-                  {genreFilter}
-                  <X className="h-3 w-3" />
-                </button>
-              )}
-              {GENRES.filter((g) => g !== genreFilter).map((genre) => (
-                <button
-                  key={genre}
-                  type="button"
-                  onClick={() => setGenreFilter(genre)}
-                  className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600 hover:bg-gray-200 transition-colors"
-                >
-                  {genre}
-                </button>
-              ))}
-            </div>
+            {/* Genre Filter Dropdown */}
+            <GenreDropdown
+              selected={genreFilter}
+              onChange={setGenreFilter}
+              compact
+            />
           </div>
         </Card.Header>
 

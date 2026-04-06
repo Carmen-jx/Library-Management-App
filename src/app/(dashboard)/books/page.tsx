@@ -158,7 +158,7 @@ export default function BooksPage() {
     }
   };
 
-  if (authLoading || loading) {
+  if (authLoading) {
     return <BooksPageSkeleton />;
   }
 
@@ -181,6 +181,7 @@ export default function BooksPage() {
       {/* Book Grid */}
       <BookGrid
         books={books}
+        loading={loading}
         showActions
         favorites={favorites}
         onFavoriteToggle={handleFavoriteToggle}

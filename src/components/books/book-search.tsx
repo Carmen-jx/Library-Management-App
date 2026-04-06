@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { cn, GENRES } from '@/lib/utils';
+import { GenreDropdown } from '@/components/ui/genre-dropdown';
 
 interface BookSearchFilters {
   genres?: string[];
@@ -41,21 +41,6 @@ export function BookSearch({
       }
     };
   }, [query, onSearch]);
-
-  const handleGenreToggle = (genre: string) => {
-    setSelectedGenres((prev) => {
-      const next = prev.includes(genre)
-        ? prev.filter((g) => g !== genre)
-        : [...prev, genre];
-
-      onFilterChange?.({
-        genres: next.length > 0 ? next : undefined,
-        available: availableOnly || undefined,
-      });
-
-      return next;
-    });
-  };
 
   const handleAvailableToggle = () => {
     const next = !availableOnly;
@@ -114,26 +99,16 @@ export function BookSearch({
       </div>
 
       {/* Genre Filter */}
-      <div>
-        <p className="mb-2 text-sm font-medium text-gray-700">Genres</p>
-        <div className="flex flex-wrap gap-2">
-          {GENRES.map((genre) => (
-            <button
-              key={genre}
-              type="button"
-              onClick={() => handleGenreToggle(genre)}
-              className={cn(
-                'rounded-full px-3 py-1.5 text-xs font-medium transition-colors',
-                selectedGenres.includes(genre)
-                  ? 'bg-indigo-600 text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              )}
-            >
-              {genre}
-            </button>
-          ))}
-        </div>
-      </div>
+      <GenreDropdown
+        selected={selectedGenres}
+        onChange={(genres) => {
+          setSelectedGenres(genres);
+          onFilterChange?.({
+            genres: genres.length > 0 ? genres : undefined,
+            available: availableOnly || undefined,
+          });
+        }}
+      />
     </div>
   );
 }
